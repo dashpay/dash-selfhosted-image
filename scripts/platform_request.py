@@ -26,7 +26,7 @@ class GitHub:
 
     def call(self, path, data=None, method=None):
         headers = {"Accept": "application/vnd.github+json", "User-Agent": "dash-runner-image",
-                   "X-GitHub-Api-Version": "2022-11-28"}
+                   "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
         request = urllib.request.Request(
@@ -131,7 +131,7 @@ def inspect_published(reference, record):
 def candidate_digest(api, record):
     validate_request(record)
     statuses = api.call(f"repos/{PLATFORM}/commits/{record['head_sha']}/status")["statuses"]
-    candidates = [item for item in statuses if item["context"] == CONTEXT]
+    candidates = [item for item in statuses if item["context"] == f"{CONTEXT} / PR {record['pr']}"]
     require(len(candidates) == 1 and candidates[0]["state"] == "success",
             "No successfully published candidate for this PR head")
     candidate = candidates[0]
@@ -191,7 +191,7 @@ def status(api, record, state, description):
     run_repository = os.environ["GITHUB_REPOSITORY"]
     require(run_repository in (PLATFORM, IMAGE) and run_id.isdigit(), "Unexpected workflow context")
     api.call(f"repos/{PLATFORM}/statuses/{record['head_sha']}", {
-        "state": state, "context": CONTEXT, "description": description[:140],
+        "state": state, "context": f"{CONTEXT} / PR {record['pr']}", "description": description[:140],
         "target_url": f"https://github.com/{run_repository}/actions/runs/{run_id}",
     })
 

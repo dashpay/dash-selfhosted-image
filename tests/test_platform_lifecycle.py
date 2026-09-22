@@ -138,7 +138,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_publisher_status_must_be_from_successful_trusted_workflow(self):
         status_path = f"repos/{PLATFORM}/commits/{HEAD}/status"
-        candidate = {"context": "Runner image candidate", "state": "success", "description": DIGEST,
+        candidate = {"context": "Runner image candidate / PR 4702", "state": "success", "description": DIGEST,
                      "creator": {"login": "github-actions[bot]"},
                      "target_url": "https://github.com/dashpay/platform/actions/runs/7"}
         self.api.responses[status_path] = {"statuses": [candidate]}
