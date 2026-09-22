@@ -30,6 +30,7 @@ for artifact in lock['artifacts']:
     assert artifact['format'] in ('tar', 'zip', 'file')
     if 'package_xml' in artifact:
         package = ET.fromstring(artifact['package_xml'])
+        assert package.tag == '{http://schemas.android.com/repository/android/common/02}repository'
         assert package.find('localPackage').attrib['path'] == artifact['name']
 assert {'runner', 'rustup-init', 'cargo-llvm-cov', 'cargo-nextest', 'cargo-machete', 'cargo-ndk', 'protoc', 'emulator', 'system-images;android-35;default;x86_64'} <= names
 print(f'Locked base, apt snapshot, Rust manifest and {len(names)} SHA-256 artifacts validated')

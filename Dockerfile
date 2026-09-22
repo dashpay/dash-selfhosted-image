@@ -36,7 +36,6 @@ RUN test "${TARGETARCH:-amd64}" = amd64 \
 COPY image.lock.json /build/image.lock.json
 COPY scripts/install-artifacts.py /build/install-artifacts.py
 RUN python3 /build/install-artifacts.py \
- && ln -s 19.0 /opt/android-sdk/cmdline-tools/latest \
  && mkdir -p /opt/android-sdk/licenses \
  && printf '%s\n' 8933bad161af4178b1185d1a37fbf41ea5269c55 d56f5187479451eabf01fb78af6dfcb131a6481e 24333f8a63b6825ea9c5514f83c2829b004d1fee > /opt/android-sdk/licenses/android-sdk-license \
  && cp /build/image.lock.json /opt/ci/image.lock.json \
@@ -48,7 +47,7 @@ ENV HOME=/home/runner \
     ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.1.13356709 \
-    PATH=/opt/ci/bin:/opt/protoc/bin:/home/runner/.cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/emulator:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/opt/ci/bin:/opt/protoc/bin:/home/runner/.cargo/bin:/opt/android-sdk/cmdline-tools/19.0/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/emulator:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER 1001:1001
 RUN rust_version=$(python3 -c 'import json; print(json.load(open("/opt/ci/image.lock.json"))["rust_version"])') \
  && manifest_hash=$(python3 -c 'import json; print(json.load(open("/opt/ci/image.lock.json"))["rust_manifest_sha256"])') \
