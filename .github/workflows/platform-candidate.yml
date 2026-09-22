@@ -1,0 +1,228 @@
+name: Platform runner image candidate and promotion
+
+on:
+  workflow_call:
+    inputs:
+      pull_request:
+        type: number
+        required: true
+      control_revision:
+        description: Immutable reviewed orchestration revision, pinned by the trusted caller
+        type: string
+        required: true
+      mode:
+        type: string
+        default: candidate
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.plan.outputs.changed }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
+      recipe_revision: ${{ steps.plan.outputs.recipe_revision }}
+      manifest_sha256: ${{ steps.plan.outputs.manifest_sha256 }}
+      candidate_tag: ${{ steps.plan.outputs.candidate_tag }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      # Protected caller selects orchestration code, not the PR's manifest.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: dashpay/dash-selfhosted-image
+          ref: ${{ inputs.control_revision }}
+          persist-credentials: false
+      - name: Resolve PR requirements as data, without checking out PR code
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pull_request }}
+          REQUEST_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUEST_MODE" == candidate || "$REQUEST_MODE" == promote ]]
+          python3 scripts/platform_request.py plan --pr "$PR_NUMBER" \
+            --output "$RUNNER_TEMP/request" --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        id: upload
+        with:
+          name: runner-request-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/request/
+          retention-days: 30
+
+  build:
+    needs: request
+    if: inputs.mode == 'candidate' && needs.request.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: dashpay/dash-selfhosted-image
+          ref: ${{ inputs.control_revision }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: dashpay/dash-selfhosted-image
+          ref: ${{ needs.request.outputs.recipe_revision }}
+          path: recipe
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          artifact-ids: ${{ needs.request.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/request
+      - name: Materialize locked build inputs
+        run: |
+          python3 control/scripts/image_contract.py materialize "$RUNNER_TEMP/request/manifest.json" recipe
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build candidate without publishing credentials
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: recipe
+          platforms: linux/amd64
+          load: true
+          tags: dash-selfhosted-image:candidate
+          provenance: false
+          build-args: IMAGE_RECIPE_REVISION=${{ needs.request.outputs.recipe_revision }}
+          labels: |
+            org.dash.platform.pr=${{ inputs.pull_request }}
+            org.dash.platform.head=${{ needs.request.outputs.head_sha }}
+            org.dash.ci.manifest-sha256=${{ needs.request.outputs.manifest_sha256 }}
+            org.opencontainers.image.revision=${{ needs.request.outputs.recipe_revision }}
+      - name: Prove confinement, compiler toolchains and the exact manifest
+        run: |
+          control/scripts/smoke-test.sh dash-selfhosted-image:candidate
+          docker run --rm --network none --user 1001:1001 --cap-drop ALL \
+            --security-opt no-new-privileges=true \
+            --mount "type=bind,src=$RUNNER_TEMP/request/manifest.json,dst=/tmp/requirements.json,readonly" \
+            dash-selfhosted-image:candidate ci-image-contract verify /tmp/requirements.json
+      - name: Prove KVM and boot the pinned emulator
+        run: control/scripts/smoke-test.sh dash-selfhosted-image:candidate --kvm
+      - name: Export the tested build with provenance and SBOM
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: recipe
+          platforms: linux/amd64
+          outputs: type=oci,dest=${{ runner.temp }}/candidate.oci.tar
+          provenance: mode=max
+          sbom: true
+          build-args: IMAGE_RECIPE_REVISION=${{ needs.request.outputs.recipe_revision }}
+          labels: |
+            org.dash.platform.pr=${{ inputs.pull_request }}
+            org.dash.platform.head=${{ needs.request.outputs.head_sha }}
+            org.dash.ci.manifest-sha256=${{ needs.request.outputs.manifest_sha256 }}
+            org.opencontainers.image.revision=${{ needs.request.outputs.recipe_revision }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        id: upload
+        with:
+          name: runner-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate.oci.tar
+          compression-level: 0
+          retention-days: 3
+
+  publish:
+    needs: [request, build]
+    if: inputs.mode == 'candidate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      # Fresh VM: never execute PR recipe, image or application code here.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: dashpay/dash-selfhosted-image
+          ref: ${{ inputs.control_revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          artifact-ids: ${{ needs.request.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/request
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/candidate
+      - name: Install OCI transport and reject stale PR heads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          python3 scripts/platform_request.py check-current --request "$RUNNER_TEMP/request/request.json"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish immutable PR candidate, never the main channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ needs.request.outputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+          image="dashpay/dash-selfhosted-image:$CANDIDATE_TAG"
+          skopeo copy --all --preserve-digests \
+            --dest-authfile "${DOCKER_CONFIG:-$HOME/.docker}/config.json" \
+            "oci-archive:$RUNNER_TEMP/candidate/candidate.oci.tar" "docker://$image"
+          digest="sha256:$(skopeo inspect --raw "docker://$image" | sha256sum | cut -d ' ' -f 1)"
+          python3 scripts/platform_request.py published --request "$RUNNER_TEMP/request/request.json" --digest "$digest"
+          printf 'Candidate: dashpay/dash-selfhosted-image@%s\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
+
+  promote:
+    needs: request
+    if: inputs.mode == 'promote'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: dashpay/dash-selfhosted-image
+          ref: ${{ inputs.control_revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          artifact-ids: ${{ needs.request.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/request
+      - name: Install OCI transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Verify merge and real candidate jobs, then promote the same digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          digest=$(python3 scripts/platform_request.py resolve-candidate --request "$RUNNER_TEMP/request/request.json")
+          python3 scripts/platform_request.py promote --request "$RUNNER_TEMP/request/request.json" --digest "$digest" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

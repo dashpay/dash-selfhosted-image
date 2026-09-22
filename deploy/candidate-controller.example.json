@@ -1,0 +1,14 @@
+{
+  "app_id": 0,
+  "installation_id": 0,
+  "private_key_file": "/etc/dash-ci-candidates/github-app.pem",
+  "runner_group_id": 0,
+  "state_dir": "/var/lib/dash-ci-candidates",
+  "max_runners": 1,
+  "cpus_per_runner": 8,
+  "memory_gib_per_runner": 32,
+  "min_free_gib": 100,
+  "max_age_seconds": 10800,
+  "trusted_fork_owners": ["thepastaclaw"],
+  "approved_heads": {}
+}

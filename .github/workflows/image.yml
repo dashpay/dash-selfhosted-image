@@ -19,6 +19,8 @@ jobs:
     # Building/publishing needs Docker. The persistent runner being built does not.
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    outputs:
+      oci_artifact: ${{ steps.oci-upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
@@ -52,6 +54,26 @@ jobs:
 
       - name: Test KVM and boot the pinned Android emulator
         run: scripts/smoke-test.sh dash-selfhosted-image:test --kvm
+
+      - name: Exercise the candidate OCI export on image PRs
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          platforms: linux/amd64
+          outputs: type=oci,dest=${{ runner.temp }}/candidate.oci.tar
+          provenance: mode=max
+          sbom: true
+          build-args: IMAGE_RECIPE_REVISION=${{ github.sha }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: github.event_name == 'pull_request'
+        id: oci-upload
+        with:
+          name: candidate-transport-proof
+          path: ${{ runner.temp }}/candidate.oci.tar
+          compression-level: 0
+          retention-days: 3
 
       - name: Docker Hub metadata
         id: meta
@@ -108,3 +130,31 @@ jobs:
           path: |
             image-reference.txt
             image.lock.json
+
+  verify-oci-transport:
+    needs: image
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # A fresh VM reads data only, just like the credentialed publisher.
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          artifact-ids: ${{ needs.image.outputs.oci_artifact }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/candidate
+      - name: Verify OCI digest and attestations survive credential-free transfer
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          archive="oci-archive:$RUNNER_TEMP/candidate/candidate.oci.tar"
+          layout="oci:$RUNNER_TEMP/transport-proof:tested"
+          before=$(skopeo inspect --raw "$archive" | sha256sum | cut -d ' ' -f 1)
+          skopeo copy --all --preserve-digests "$archive" "$layout"
+          after=$(skopeo inspect --raw "$layout" | sha256sum | cut -d ' ' -f 1)
+          test "$before" = "$after"
+          skopeo inspect --raw "$layout" | jq -e \
+            '.manifests | any(.annotations["vnd.docker.reference.type"] == "attestation-manifest")'
+          printf 'OCI archive transfer preserved digest sha256:%s and attestations\n' "$after" \
+            >> "$GITHUB_STEP_SUMMARY"

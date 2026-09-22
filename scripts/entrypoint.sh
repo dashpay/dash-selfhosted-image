@@ -6,6 +6,16 @@ if [ "$(id -u)" -eq 0 ]; then
   exit 1
 fi
 case "${1:-run}" in
+  jit)
+    # The host controller supplies a one-job JIT configuration, never its App
+    # key or installation token. Registration/work volumes are disposable.
+    test -w /runner
+    cp -a --no-preserve=ownership /opt/actions-runner/. /runner/
+    cd /runner
+    test -r /run/secrets/runner-jit
+    jit_config=$(cat /run/secrets/runner-jit)
+    exec ./run.sh --jitconfig "$jit_config"
+    ;;
   verify)
     shift
     exec /opt/ci/bin/verify-image "$@"
