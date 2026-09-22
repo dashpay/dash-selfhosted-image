@@ -9,9 +9,10 @@ if [[ "${2:-}" == --kvm ]]; then
   docker run "${runtime[@]}" "$image" verify --confined --kvm
   docker run "${runtime[@]}" --cpus 4 --memory 6g "$image" \
     ci-android-emulator bash -euo pipefail -c '
-      test "$(adb shell getprop ro.build.version.sdk | tr -d "\r")" = 35
+      expected_api=$(python3 -c "import json; print(json.load(open(\"/opt/ci/image.lock.json\"))[\"android\"][\"api\"])")
+      test "$(adb shell getprop ro.build.version.sdk | tr -d "\r")" = "$expected_api"
       test "$(adb shell getprop ro.product.cpu.abi | tr -d "\r")" = x86_64
-      echo ANDROID_API_35_BOOT_OK
+      echo "ANDROID_API_${expected_api}_BOOT_OK"
     '
 else
   docker run "${runtime[@]}" --network none "$image" verify --confined
