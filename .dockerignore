@@ -1,0 +1,8 @@
+*
+!Dockerfile
+!image.lock.json
+!scripts
+!scripts/install-artifacts.py
+!scripts/entrypoint.sh
+!scripts/verify-image.py
+!scripts/android-emulator.sh

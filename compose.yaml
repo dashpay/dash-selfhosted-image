@@ -1,0 +1,17 @@
+services:
+  runner:
+    # Set to the release's immutable digest, e.g. dashpay/dash-selfhosted-image@sha256:...
+    image: ${RUNNER_IMAGE:?Set RUNNER_IMAGE to a verified published digest}
+    init: true
+    user: '1001:1001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 120s
+    volumes:
+      - registration:/runner
+      - work:/work
+    # No host Docker socket, privileged mode, host namespaces, or extra devices.
+volumes:
+  registration:
+  work:

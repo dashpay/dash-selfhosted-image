@@ -1,0 +1,8 @@
+# Only Kotlin/emulator runners need this overlay. Obtain KVM_GID from
+# `stat -c %g /dev/kvm` on the host; do not chmod the device from jobs.
+services:
+  runner:
+    devices:
+      - /dev/kvm:/dev/kvm:rw
+    group_add:
+      - ${KVM_GID:?Set the host KVM device group ID}

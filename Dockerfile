@@ -1,0 +1,75 @@
+FROM ubuntu:24.04@sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4
+
+# Minimal Ubuntu has no CA bundle. BuildKit verifies HTTPS and the pinned deb
+# checksum; extract its public roots before apt first contacts the snapshot.
+ADD --checksum=sha256:641de77d8f142cfd62a1a6f964ba67b20754d3337c480efb529d086075a06c9a https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/c/ca-certificates/ca-certificates_20240203_all.deb /tmp/bootstrap-ca.deb
+
+# The signed Ubuntu archive is frozen, not "whatever noble contains today".
+ARG APT_SNAPSHOT=20260920T000000Z
+ARG SOURCE_DATE_EPOCH=1789862400
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+RUN test "${TARGETARCH:-amd64}" = amd64 \
+ && mkdir -p /tmp/bootstrap-ca /etc/ssl/certs \
+ && dpkg-deb -x /tmp/bootstrap-ca.deb /tmp/bootstrap-ca \
+ && cat /tmp/bootstrap-ca/usr/share/ca-certificates/mozilla/*.crt > /etc/ssl/certs/ca-certificates.crt \
+ && rm -rf /tmp/bootstrap-ca /tmp/bootstrap-ca.deb \
+ && rm -f /etc/apt/sources.list.d/ubuntu.sources \
+ && printf 'deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble main universe\ndeb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble-updates main universe\ndeb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble-security main universe\n' "$APT_SNAPSHOT" "$APT_SNAPSHOT" "$APT_SNAPSHOT" > /etc/apt/sources.list \
+ && apt-get update --error-on=any \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git gh jq python3 unzip zip xz-utils bzip2 gnupg \
+      build-essential clang llvm libsnappy-dev cmake libgmp-dev libssl-dev pkg-config \
+      openjdk-17-jdk-headless libicu74 libkrb5-3 zlib1g libgcc-s1 libstdc++6 \
+      libcurl4t64 liblttng-ust1t64 libunwind8 libpulse0 libx11-xcb1 libnss3 \
+      libxcomposite1 libxcursor1 libxi6 libxrandr2 libxtst6 libasound2t64 \
+      libgl1 libegl1 libdbus-1-3 libxdamage1 libxfixes3 \
+ && dpkg-query -W -f='${Package}\t${Version}\n' | sort > /usr/share/ci-apt-packages.tsv \
+ && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/apt/archives/* \
+ && groupadd --gid 1001 runner \
+ && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash runner \
+ && mkdir -p /runner /work /opt/ci/bin \
+ && chown runner:runner /runner /work \
+ && find /usr /bin /sbin -xdev -type f -perm /6000 -exec chmod a-s {} +
+
+COPY image.lock.json /build/image.lock.json
+COPY scripts/install-artifacts.py /build/install-artifacts.py
+RUN python3 /build/install-artifacts.py \
+ && ln -s 19.0 /opt/android-sdk/cmdline-tools/latest \
+ && mkdir -p /opt/android-sdk/licenses \
+ && printf '%s\n' 8933bad161af4178b1185d1a37fbf41ea5269c55 d56f5187479451eabf01fb78af6dfcb131a6481e 24333f8a63b6825ea9c5514f83c2829b004d1fee > /opt/android-sdk/licenses/android-sdk-license \
+ && cp /build/image.lock.json /opt/ci/image.lock.json \
+ && echo 1 > /opt/ci/contract-version \
+ && rm -rf /build
+
+ENV HOME=/home/runner \
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.1.13356709 \
+    PATH=/opt/ci/bin:/opt/protoc/bin:/home/runner/.cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/emulator:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+USER 1001:1001
+RUN rust_version=$(python3 -c 'import json; print(json.load(open("/opt/ci/image.lock.json"))["rust_version"])') \
+ && manifest_hash=$(python3 -c 'import json; print(json.load(open("/opt/ci/image.lock.json"))["rust_manifest_sha256"])') \
+ && curl -fsSL --retry 3 "https://static.rust-lang.org/dist/channel-rust-${rust_version}.toml" -o /tmp/rust-manifest.toml \
+ && echo "$manifest_hash  /tmp/rust-manifest.toml" | sha256sum -c - \
+ && /opt/ci/rustup-init -y --no-modify-path --profile minimal --default-toolchain "$rust_version" \
+      --component rustfmt,clippy,llvm-tools-preview --target wasm32-unknown-unknown,x86_64-linux-android \
+ && rustup set auto-self-update disable \
+ && rm -f /tmp/rust-manifest.toml
+
+USER root
+COPY --chmod=755 scripts/entrypoint.sh /opt/ci/bin/runner-entrypoint
+COPY --chmod=755 scripts/verify-image.py /opt/ci/bin/verify-image
+COPY --chmod=755 scripts/android-emulator.sh /opt/ci/bin/ci-android-emulator
+RUN rm /opt/ci/rustup-init \
+ && find /opt/ci /opt/actions-runner /opt/android-sdk /opt/protoc -type d -exec chmod go-w {} +
+LABEL org.opencontainers.image.source="https://github.com/dashpay/dash-selfhosted-image" \
+      org.opencontainers.image.title="Dash unprivileged self-hosted CI runner" \
+      org.dash.ci.contract="1"
+USER 1001:1001
+WORKDIR /runner
+RUN /opt/ci/bin/verify-image
+ENTRYPOINT ["/opt/ci/bin/runner-entrypoint"]
+CMD ["run"]
