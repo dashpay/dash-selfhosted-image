@@ -25,11 +25,11 @@ for command, expected in [
     (['rustc', '--version'], 'rustc ' + lock['rust_version']),
     (['cargo', 'llvm-cov', '--version'], 'cargo-llvm-cov 0.9.1'),
     (['cargo', 'nextest', '--version'], 'cargo-nextest 0.9.144'),
-    (['cargo', 'machete', '--version'], 'cargo-machete 0.9.2'),
+    (['cargo', 'machete', '--version'], '0.9.2'),
     (['cargo', 'ndk', '--version'], 'cargo-ndk 4.1.2'),
     (['protoc', '--version'], 'libprotoc 32.0'),
 ]:
-    actual = run(*command)
+    actual = run(*command).splitlines()[0]
     require(actual == expected or actual.startswith(expected + ' '), f'Unexpected version: {actual}')
     print(actual)
 for command in ['clang', 'clang++', 'llvm-config', 'cmake', 'gh', 'git', 'python3', 'jq', 'zip', 'unzip', 'gpg', 'pkg-config', 'javac', 'adb', 'sdkmanager', 'avdmanager', 'emulator']:

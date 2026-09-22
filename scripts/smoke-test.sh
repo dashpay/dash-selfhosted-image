@@ -15,7 +15,10 @@ if [[ "${2:-}" == --kvm ]]; then
     '
 else
   docker run "${runtime[@]}" --network none "$image" verify --confined
-  docker run "${runtime[@]}" --network none "$image" bash -euo pipefail -c '
+  docker run "${runtime[@]}" --network none \
+    --mount type=volume,destination=/runner --mount type=volume,destination=/work \
+    "$image" bash -euo pipefail -c '
+    touch /work/ownership-probe
     cp -a --no-preserve=ownership /opt/actions-runner/. /runner/
     /runner/bin/Runner.Listener --version
     /runner/externals/node24/bin/node -e "console.log(\"RUNNER_NODE_OK\")"
