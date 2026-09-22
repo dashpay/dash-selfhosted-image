@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs a command under the prebaked API 35 emulator; never invokes sdkmanager.
+# Runs a command under the prebaked, manifest-selected emulator; never invokes sdkmanager.
 set -euo pipefail
 if [ "$#" -eq 0 ]; then echo 'Usage: ci-android-emulator command [args...]' >&2; exit 2; fi
 export ANDROID_USER_HOME="$HOME/.android"
@@ -10,9 +10,10 @@ mkdir -p "$ANDROID_AVD_HOME"
 name="ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${BASHPID}"
 serial=emulator-5554
 test -r /dev/kvm && test -w /dev/kvm
+system_image=$(python3 -c 'import json; print(json.load(open("/opt/ci/image.lock.json"))["android"]["system_image"])')
 # A fresh AVD avoids stale lockscreen and snapshot state between jobs.
 printf 'no\n' | avdmanager create avd --force --name "$name" \
-  --package 'system-images;android-35;default;x86_64' --device pixel_6
+  --package "$system_image" --device pixel_6
 log="${RUNNER_TEMP:-/tmp}/android-emulator.log"
 emulator -avd "$name" -port 5554 -accel on -gpu swiftshader \
   -no-snapshot -no-window -no-audio -no-boot-anim -camera-back none \

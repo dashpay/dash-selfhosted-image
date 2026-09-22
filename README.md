@@ -1,5 +1,10 @@
 # Dash self-hosted runner image
 
+For Platform-driven candidate builds, one-job PR runners and promotion after
+merge, see [the PR image lifecycle](docs/platform-pr-images.md). This includes the
+trusted-workflow and host-controller bootstrap; publishing code alone does not
+deploy an autoscaler.
+
 Rebuildable Linux/amd64 environment for Platform's persistent `rust-ci` and
 `kotlin-ci` jobs. Source and Docker Hub publishing live here; the consuming
 workflow contract lives in [Platform](https://github.com/dashpay/platform/blob/v4.3-dev/.github/SELF_HOSTED_RUNNER.md).

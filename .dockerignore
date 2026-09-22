@@ -6,3 +6,4 @@
 !scripts/entrypoint.sh
 !scripts/verify-image.py
 !scripts/android-emulator.sh
+!scripts/image_contract.py
