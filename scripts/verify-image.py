@@ -43,14 +43,20 @@ with tempfile.TemporaryDirectory() as tmp:
     (p / 'smoke.rs').write_text('fn main() { println!("rust-ok"); }\n')
     run('rustc', str(p / 'smoke.rs'), '-o', str(p / 'rust-smoke'))
     require(run(str(p / 'rust-smoke')) == 'rust-ok', 'Rust compile/run failed')
-    (p / 'smoke.c').write_text('int main(void) { return 0; }\n')
-    run('clang', str(p / 'smoke.c'), '-o', str(p / 'clang-smoke'))
+    (p / 'smoke.c').write_text('#include <gmp.h>\n#include <openssl/crypto.h>\n#include <snappy-c.h>\nint main(void) { mpz_t n; mpz_init(n); mpz_clear(n); return OpenSSL_version_num() == 0 || snappy_max_compressed_length(1) == 0; }\n')
+    run('clang', str(p / 'smoke.c'), '-lgmp', '-lcrypto', '-lsnappy', '-o', str(p / 'clang-smoke'))
     run(str(p / 'clang-smoke'))
+    ndk_linker = Path(os.environ['ANDROID_NDK_HOME']) / 'toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang'
+    run('rustc', '--target', 'x86_64-linux-android', '-C', 'linker=' + str(ndk_linker), str(p / 'smoke.rs'), '-o', str(p / 'android-smoke'))
+    (p / 'Smoke.java').write_text('public class Smoke { public static void main(String[] args) { System.out.println("java-ok"); } }\n')
+    run('javac', str(p / 'Smoke.java'))
+    require(run('java', '-cp', tmp, 'Smoke') == 'java-ok', 'Java compile/run failed')
     (p / 'smoke.proto').write_text('syntax = "proto3"; message Smoke { string value = 1; }\n')
     run('protoc', '-I' + tmp, '--descriptor_set_out=' + str(p / 'smoke.pb'), str(p / 'smoke.proto'))
 if '--confined' in sys.argv:
     status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
-    require(int(status['CapEff'].strip(), 16) == 0, 'Effective capabilities must be empty')
+    for field in ['CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb']:
+        require(int(status[field].strip(), 16) == 0, f'{field} capabilities must be empty')
     require(status['NoNewPrivs'].strip() == '1', 'no-new-privileges must be enabled')
     require(status['Seccomp'].strip() == '2', 'Seccomp filtering must be enabled')
 if '--kvm' in sys.argv:

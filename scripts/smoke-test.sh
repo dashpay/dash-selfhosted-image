@@ -15,6 +15,11 @@ if [[ "${2:-}" == --kvm ]]; then
     '
 else
   docker run "${runtime[@]}" --network none "$image" verify --confined
+  docker run "${runtime[@]}" --network none "$image" bash -euo pipefail -c '
+    cp -a --no-preserve=ownership /opt/actions-runner/. /runner/
+    /runner/bin/Runner.Listener --version
+    /runner/externals/node24/bin/node -e "console.log(\"RUNNER_NODE_OK\")"
+  '
   # The service must fail closed until explicitly registered. No token or PAT
   # is baked in, and no workflow can silently register a runner.
   if output=$(docker run "${runtime[@]}" --network none "$image" run 2>&1); then
