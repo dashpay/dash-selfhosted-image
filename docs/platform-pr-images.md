@@ -119,3 +119,14 @@ Monitor the service journal and queued candidate jobs. App/API failures,
 fork-policy rejection and resource floors fail closed. Published tags remain as
 evidence/rollback references; OCI transfer artifacts expire after three days.
 No source commit, merge or tag restarts the production runner or OpenClaw.
+
+## NPM candidate proof
+
+When requirements include `client_codegen`, promotion additionally requires
+`NPM release build validation` in `.github/workflows/npm-runner-validation.yml`
+on an `...-npm` candidate label carrying the same complete head and image digest.
+That job uses Platform's release build action, generates clients natively, builds
+and packs the public workspaces, and verifies the packed client files. It has no
+publishing credentials. A skipped job or a newer failed validation cannot be
+replaced by an older success. Only Kotlin receives KVM; the NPM candidate receives
+no host device or Docker authority.

@@ -24,7 +24,7 @@ from platform_request import (
 )
 
 MANAGED = "org.dash.ci.candidate"
-LABEL = re.compile(r"platform-image-pr-([1-9][0-9]*)-([0-9a-f]{40})-([0-9a-f]{64})-(rust|kotlin)")
+LABEL = re.compile(r"platform-image-pr-([1-9][0-9]*)-([0-9a-f]{40})-([0-9a-f]{64})-(rust|kotlin|npm)")
 
 
 def b64(value):
@@ -135,7 +135,7 @@ def queued_jobs(api):
             if run["id"] in seen or run["event"] != "pull_request":
                 continue
             seen.add(run["id"])
-            if run["path"] not in (".github/workflows/tests.yml", ".github/workflows/kotlin-sdk-build.yml"):
+            if run["path"] not in (".github/workflows/tests.yml", ".github/workflows/kotlin-sdk-build.yml", ".github/workflows/npm-runner-validation.yml"):
                 continue
             for job in items(api, f"repos/{PLATFORM}/actions/runs/{run['id']}/jobs", "jobs"):
                 if job["status"] == "queued" and any(LABEL.fullmatch(label) for label in job.get("labels", [])):

@@ -128,3 +128,42 @@ and release tags get a semantic-version tag, never `latest`. The workflow emits
 the immutable image reference in its summary and downloadable artifact, with
 BuildKit provenance and an SBOM attached. Protect `main` and release-tag writes
 with the organization's normal review policy. New commits do not deploy runners.
+
+## Native DAPI client generation
+
+The optional `client_codegen` requirement installs `/opt/client-codegen`: protobuf
+3.18.1, gRPC 1.46.3's Objective-C/Python plugins and gRPC Java 1.42.1. These preserve
+Platform's existing client output and are separate from `/opt/protoc` (32.0),
+which Rust uses. Only the small compiler/plugin targets are built; no gRPC server
+libraries or language runtimes are added. Platform installs its Yarn-locked
+`ts-protoc-gen` separately with the other JavaScript build dependencies.
+
+`client-codegen/lock.json` pins every source archive and SHA-256. The recipe's
+CMake targets and version definitions are reviewed alongside that lock. The
+standalone builder also works without root on Linux and macOS:
+
+```sh
+python3 client-codegen/build.py /tmp/client-codegen
+python3 client-codegen/smoke.py /tmp/client-codegen
+```
+
+It requires Python 3.12+, CMake and a C++ compiler. Image smoke tests exercise all
+native generators as UID 1001, without network access, sudo or a Docker socket.
+The lock is copied into the installed toolchain so Platform can reject mismatched
+generators before a build. Source inputs are checksum-verified before extraction.
+
+Register NPM-capable ordinary capacity with `npm-build` only after the matching
+Platform requirements and full NPM release-build validation pass. NPM jobs do not
+need KVM. A manifest containing `client_codegen` now requires successful Rust,
+Kotlin **and NPM** jobs on the exact candidate digest before promotion. The host
+controller accepts NPM candidates only through Platform's
+`npm-runner-validation.yml`; it gives them the same non-root runtime without
+host devices. Existing manifests without `client_codegen` retain their two-job
+promotion contract.
+
+Deploy the updated controller and trusted publisher revision together with the
+Platform workflow. Update the trusted bootstrap caller's `control_revision` as
+well as its reusable-workflow SHA; updating only the image's recipe SHA cannot
+teach an old publisher/controller about the new requirement or NPM job kind.
+The Platform rollout still depends on its runner bootstrap and Rust/Kotlin
+consumer changes; merging this repository does not provision live runners.

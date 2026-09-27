@@ -33,6 +33,14 @@ class ImageContractTests(unittest.TestCase):
         changed["recipe_revision"] = "b" * 40
         self.assertNotEqual(fingerprint(changed), fingerprint(self.manifest))
 
+    def test_client_codegen_lock_must_match_recipe_and_is_optional_for_old_manifests(self):
+        changed = copy.deepcopy(self.manifest)
+        changed["requirements"]["client_codegen"]["versions"]["protobuf"] = "32.0"
+        with self.assertRaisesRegex(ValueError, "Client codegen"):
+            validate_manifest(changed)
+        changed["requirements"].pop("client_codegen")
+        validate_manifest(changed)
+
     def test_mutable_recipe_rejected(self):
         self.manifest["recipe_revision"] = "main"
         with self.assertRaisesRegex(ValueError, "full commit SHA"):

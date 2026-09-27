@@ -70,7 +70,7 @@ def validate_lock(lock):
         "rust_version", "rust_manifest_sha256", "artifacts", "bootstrap_ca",
         "apt_packages", "java_major", "versions", "android",
     }
-    require(isinstance(lock, dict) and set(lock) == required, "Unknown/missing lock fields")
+    require(isinstance(lock, dict) and required <= set(lock) <= required | {"client_codegen"}, "Unknown/missing lock fields")
     require(lock["schema"] == 2 and type(lock["schema"]) is int, "Expected lock schema 2")
     require(lock["contract_version"] == "1", "This recipe supports image contract 1")
     require(lock["platform"] == "linux/amd64", "Only linux/amd64 is supported")
@@ -80,6 +80,12 @@ def validate_lock(lock):
     datetime.datetime.strptime(lock["apt_snapshot"], "%Y%m%dT%H%M%SZ")
     require(matches(VERSION, lock["rust_version"]), "Rust must be version-pinned")
     require(matches(SHA256, lock["rust_manifest_sha256"]), "Missing Rust manifest checksum")
+    if "client_codegen" in lock:
+        recipe = Path(__file__).resolve().parent.parent / "client-codegen/lock.json"
+        if not recipe.exists():
+            recipe = Path("/opt/client-codegen-recipe/lock.json")
+        expected = read_json(recipe)
+        require(lock["client_codegen"] == expected, "Client codegen must match the reviewed recipe lock")
     versions = lock["versions"]
     require(isinstance(versions, dict) and set(versions) == {
         "runner", "llvm_cov", "nextest", "machete", "cargo_ndk", "protoc", "rustup",
