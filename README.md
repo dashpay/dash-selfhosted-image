@@ -152,9 +152,18 @@ native generators as UID 1001, without network access, sudo or a Docker socket.
 The lock is copied into the installed toolchain so Platform can reject mismatched
 generators before a build. Source inputs are checksum-verified before extraction.
 
-Register NPM-capable ordinary capacity with `npm-build` only after the matching
-Platform requirements and full NPM release-build validation pass. NPM jobs do not
-need KVM. A manifest containing `client_codegen` now requires successful Rust,
+Register dedicated release capacity with `RUNNER_LABELS=npm-build` and
+`RUNNER_GROUP=platform-npm-releases` only after the matching Platform requirements
+and full NPM release-build validation pass. Restrict that group to Platform's
+protected reusable release workflow as specified in its
+[NPM runner runbook](https://github.com/dashpay/platform/blob/v4.2-dev/.github/NPM_RUNNER.md).
+Confirm that the organization supports selected-workflow restrictions before
+enabling this pool; a label alone does not prevent PR jobs from using it.
+Ordinary PR validation uses `npm-pr` in a separate group, with separate runner
+registrations, HOME, workspaces and Cargo cache volumes. Never give release
+runners PR labels or share writable state between these pools.
+
+NPM jobs do not need KVM. A manifest containing `client_codegen` requires successful Rust,
 Kotlin **and NPM** jobs on the exact candidate digest before promotion. The host
 controller accepts NPM candidates only through Platform's
 `npm-runner-validation.yml`; it gives them the same non-root runtime without
