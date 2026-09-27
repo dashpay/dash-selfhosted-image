@@ -38,6 +38,7 @@ class LifecycleTests(unittest.TestCase):
             "schema": 1, "recipe_revision": "b" * 40,
             "requirements": json.loads((ROOT / "image.lock.json").read_text()),
         }
+        self.manifest["requirements"].pop("client_codegen", None)
         self.pr = {"number": 4702, "state": "open", "merged": False, "changed_files": 1,
                    "head": {"sha": HEAD, "repo": {"full_name": PLATFORM, "owner": {"login": "dashpay"}}},
                    "base": {"sha": "c" * 40, "ref": "v4.3-dev"}, "merge_commit_sha": "e" * 40}
@@ -94,18 +95,37 @@ class LifecycleTests(unittest.TestCase):
     def test_real_jobs_must_both_pass_on_this_exact_digest(self):
         self.setup_jobs()
         self.assertEqual(set(tested_candidate_jobs(self.api, self.record, DIGEST)), {"rust", "kotlin"})
-        with self.assertRaisesRegex(ValueError, "Both real"):
+        with self.assertRaisesRegex(ValueError, "All required"):
             tested_candidate_jobs(self.api, self.record, "sha256:" + "f" * 64)
         self.api.responses[f"repos/{PLATFORM}/actions/runs/2/jobs?per_page=100"]["jobs"][0]["conclusion"] = "skipped"
-        with self.assertRaisesRegex(ValueError, "Both real"):
+        with self.assertRaisesRegex(ValueError, "All required"):
             tested_candidate_jobs(self.api, self.record, DIGEST)
+
+    def test_client_codegen_requires_real_npm_job_on_same_digest(self):
+        self.manifest["requirements"]["client_codegen"] = json.loads((ROOT / "client-codegen/lock.json").read_text())
+        query = self.setup_jobs()
+        with self.assertRaisesRegex(ValueError, "All required"):
+            tested_candidate_jobs(self.api, self.record, DIGEST)
+        self.api.responses[query]["workflow_runs"].append({
+            "id": 4, "path": ".github/workflows/npm-runner-validation.yml", "conclusion": "success",
+        })
+        job = self.job("npm")
+        job["name"] = "NPM release build validation"
+        self.api.responses[f"repos/{PLATFORM}/actions/runs/4/jobs?per_page=100"] = {"jobs": [job]}
+        self.assertEqual(set(tested_candidate_jobs(self.api, self.record, DIGEST)), {"rust", "kotlin", "npm"})
+        job["conclusion"] = "skipped"
+        with self.assertRaisesRegex(ValueError, "All required"):
+            tested_candidate_jobs(self.api, self.record, DIGEST)
+        args = docker_arguments(self.config, self.job("npm"), self.record, DIGEST, "/safe/jit")
+        self.assertNotIn("--device", args)
+        self.assertNotIn("/var/run/docker.sock", " ".join(args))
 
     def test_newer_failed_run_cannot_reuse_an_older_success(self):
         query = self.setup_jobs()
         self.api.responses[query]["workflow_runs"].append({
             "id": 3, "path": ".github/workflows/tests.yml", "conclusion": "failure",
         })
-        with self.assertRaisesRegex(ValueError, "Both real"):
+        with self.assertRaisesRegex(ValueError, "All required"):
             tested_candidate_jobs(self.api, self.record, DIGEST)
 
     def test_fork_trust_is_not_expanded_and_explicit_approval_is_head_bound(self):

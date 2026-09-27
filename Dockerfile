@@ -27,9 +27,11 @@ RUN test "${TARGETARCH:-amd64}" = amd64 \
  && chown runner:runner /runner /work \
  && find /usr /bin /sbin -xdev -type f -perm /6000 -exec chmod a-s {} +
 
-COPY image.lock.json /build/image.lock.json
+COPY --chmod=755 client-codegen /opt/client-codegen-recipe
+COPY --chmod=644 image.lock.json /build/image.lock.json
 COPY scripts/install-artifacts.py /build/install-artifacts.py
 RUN python3 /build/install-artifacts.py \
+ && if python3 -c 'import json,sys; sys.exit("client_codegen" not in json.load(open("/build/image.lock.json")))'; then python3 /opt/client-codegen-recipe/build.py /opt/client-codegen; fi \
  && mkdir -p /opt/android-sdk/licenses \
  && printf '%s\n' 8933bad161af4178b1185d1a37fbf41ea5269c55 d56f5187479451eabf01fb78af6dfcb131a6481e 24333f8a63b6825ea9c5514f83c2829b004d1fee > /opt/android-sdk/licenses/android-sdk-license \
  && cp /build/image.lock.json /opt/ci/image.lock.json \
@@ -61,7 +63,7 @@ RUN [[ "$IMAGE_RECIPE_REVISION" =~ ^[0-9a-f]{40}$ ]] \
  && printf '%s\n' "$IMAGE_RECIPE_REVISION" > /opt/ci/recipe-revision
 COPY --chmod=755 scripts/android-emulator.sh /opt/ci/bin/ci-android-emulator
 RUN rm /opt/ci/rustup-init \
- && find /opt/ci /opt/actions-runner /opt/android-sdk /opt/protoc -type d -exec chmod go-w {} +
+ && find /opt/ci /opt/actions-runner /opt/android-sdk /opt/protoc /opt/client-codegen-recipe -type d -exec chmod go-w {} +
 LABEL org.opencontainers.image.source="https://github.com/dashpay/dash-selfhosted-image" \
       org.opencontainers.image.title="Dash unprivileged self-hosted CI runner" \
       org.dash.ci.contract="1"

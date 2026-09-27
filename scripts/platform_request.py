@@ -66,7 +66,7 @@ class GitHub:
 
 def candidate_label(pr, head, digest, kind):
     require(type(pr) is int and pr > 0 and matches(r"[0-9a-f]{40}", head), "Invalid candidate identity")
-    require(kind in ("rust", "kotlin"), "Unsupported candidate job")
+    require(kind in ("rust", "kotlin", "npm"), "Unsupported candidate job")
     require(matches(r"sha256:[0-9a-f]{64}", digest), "Invalid candidate digest")
     return f"platform-image-pr-{pr}-{head}-{digest[7:]}-{kind}"
 
@@ -150,13 +150,16 @@ def candidate_digest(api, record):
 
 
 def tested_candidate_jobs(api, record, digest):
-    required = {kind: candidate_label(record["pr"], record["head_sha"], digest, kind) for kind in ("rust", "kotlin")}
+    kinds = ["rust", "kotlin"]
+    if "client_codegen" in api.manifest(record["head_sha"])["requirements"]:
+        kinds.append("npm")
+    required = {kind: candidate_label(record["pr"], record["head_sha"], digest, kind) for kind in kinds}
     found = {}
     query = urllib.parse.urlencode({"event": "pull_request", "head_sha": record["head_sha"], "per_page": 100})
     runs = api.call(f"repos/{PLATFORM}/actions/runs?{query}")["workflow_runs"]
     seen_paths = set()
     for run in sorted(runs, key=lambda item: item["id"], reverse=True):
-        if run["path"] not in (".github/workflows/tests.yml", ".github/workflows/kotlin-sdk-build.yml"):
+        if run["path"] not in (".github/workflows/tests.yml", ".github/workflows/kotlin-sdk-build.yml", ".github/workflows/npm-runner-validation.yml"):
             continue
         if run["path"] in seen_paths:
             continue
@@ -168,10 +171,18 @@ def tested_candidate_jobs(api, record, digest):
             if job["conclusion"] != "success":
                 continue
             for kind, label in required.items():
-                expected_job = (job["name"] == "Tests" or job["name"].endswith("/ Tests")) if kind == "rust" else job["name"].startswith("Kotlin SDK build + tests")
+                if kind == "rust":
+                    expected_job = (run["path"] == ".github/workflows/tests.yml"
+                                    and (job["name"] == "Tests" or job["name"].endswith("/ Tests")))
+                elif kind == "kotlin":
+                    expected_job = (run["path"] == ".github/workflows/kotlin-sdk-build.yml"
+                                    and job["name"].startswith("Kotlin SDK build + tests"))
+                else:
+                    expected_job = (run["path"] == ".github/workflows/npm-runner-validation.yml"
+                                    and job["name"] == "NPM release build validation")
                 if expected_job and label in job["labels"] and job.get("runner_name", "").startswith("platform-pr-"):
                     found[kind] = job["html_url"]
-    require(set(found) == set(required), "Both real Rust and Kotlin jobs must pass on this PR's candidate runners")
+    require(set(found) == set(required), "All required Rust, Kotlin and NPM jobs must pass on this PR's candidate runners")
     return found
 
 

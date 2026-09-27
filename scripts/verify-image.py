@@ -22,6 +22,10 @@ require(shutil.which('docker') is None, 'Docker CLI must not be installed')
 require(not Path('/var/run/docker.sock').exists(), 'Host Docker socket must not be mounted')
 lock = json.loads(Path('/opt/ci/image.lock.json').read_text())
 versions = lock['versions']
+if 'client_codegen' in lock:
+    require(json.loads(Path('/opt/client-codegen/lock.json').read_text()) == lock['client_codegen'],
+            'Client codegen lock mismatch')
+    run('python3', '/opt/client-codegen-recipe/smoke.py', '/opt/client-codegen')
 for command, expected in [
     (['rustc', '--version'], 'rustc ' + lock['rust_version']),
     (['cargo', 'llvm-cov', '--version'], 'cargo-llvm-cov ' + versions['llvm_cov']),
