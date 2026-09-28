@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -21,23 +22,32 @@ require(shutil.which('sudo') is None, 'sudo must not be installed')
 require(shutil.which('docker') is None, 'Docker CLI must not be installed')
 require(not Path('/var/run/docker.sock').exists(), 'Host Docker socket must not be mounted')
 lock = json.loads(Path('/opt/ci/image.lock.json').read_text())
+full = lock.get('profile', 'full') == 'full'
+require(platform.machine() == {'linux/amd64': 'x86_64', 'linux/arm64': 'aarch64'}[lock['platform']],
+        'Runtime architecture does not match the image lock')
+require('--kvm' not in sys.argv or full, 'The Rust-only image does not support Android/KVM')
 versions = lock['versions']
 if 'client_codegen' in lock:
     require(json.loads(Path('/opt/client-codegen/lock.json').read_text()) == lock['client_codegen'],
             'Client codegen lock mismatch')
     run('python3', '/opt/client-codegen-recipe/smoke.py', '/opt/client-codegen')
-for command, expected in [
+tool_versions = [
     (['rustc', '--version'], 'rustc ' + lock['rust_version']),
     (['cargo', 'llvm-cov', '--version'], 'cargo-llvm-cov ' + versions['llvm_cov']),
     (['cargo', 'nextest', '--version'], 'cargo-nextest ' + versions['nextest']),
     (['cargo', 'machete', '--version'], versions['machete']),
-    (['cargo', 'ndk', '--version'], 'cargo-ndk ' + versions['cargo_ndk']),
     (['protoc', '--version'], 'libprotoc ' + versions['protoc']),
-]:
+]
+if full:
+    tool_versions.append((['cargo', 'ndk', '--version'], 'cargo-ndk ' + versions['cargo_ndk']))
+for command, expected in tool_versions:
     actual = run(*command).splitlines()[0]
     require(actual == expected or actual.startswith(expected + ' '), f'Unexpected version: {actual}')
     print(actual)
-for command in ['clang', 'clang++', 'llvm-config', 'cmake', 'gh', 'git', 'python3', 'jq', 'zip', 'unzip', 'gpg', 'pkg-config', 'javac', 'adb', 'sdkmanager', 'avdmanager', 'emulator']:
+commands = ['clang', 'clang++', 'llvm-config', 'cmake', 'gh', 'git', 'python3', 'jq', 'zip', 'unzip', 'gpg', 'pkg-config', 'javac']
+if full:
+    commands += ['adb', 'sdkmanager', 'avdmanager', 'emulator']
+for command in commands:
     require(shutil.which(command), f'Missing {command}')
 require(f"javac {lock['java_major']}." in run('javac', '-version'), 'Wrong JDK major version')
 for package in lock['apt_packages']:
@@ -53,8 +63,9 @@ with tempfile.TemporaryDirectory() as tmp:
     (p / 'smoke.c').write_text('#include <gmp.h>\n#include <openssl/crypto.h>\n#include <snappy-c.h>\nint main(void) { mpz_t n; mpz_init(n); mpz_clear(n); return OpenSSL_version_num() == 0 || snappy_max_compressed_length(1) == 0; }\n')
     run('clang', str(p / 'smoke.c'), '-lgmp', '-lcrypto', '-lsnappy', '-o', str(p / 'clang-smoke'))
     run(str(p / 'clang-smoke'))
-    ndk_linker = Path(os.environ['ANDROID_NDK_HOME']) / 'toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang'
-    run('rustc', '--target', 'x86_64-linux-android', '-C', 'linker=' + str(ndk_linker), str(p / 'smoke.rs'), '-o', str(p / 'android-smoke'))
+    if full:
+        ndk_linker = Path(os.environ['ANDROID_NDK_HOME']) / 'toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang'
+        run('rustc', '--target', 'x86_64-linux-android', '-C', 'linker=' + str(ndk_linker), str(p / 'smoke.rs'), '-o', str(p / 'android-smoke'))
     (p / 'Smoke.java').write_text('public class Smoke { public static void main(String[] args) { System.out.println("java-ok"); } }\n')
     run('javac', str(p / 'Smoke.java'))
     require(run('java', '-cp', tmp, 'Smoke') == 'java-ok', 'Java compile/run failed')

@@ -1,6 +1,7 @@
 *
 !Dockerfile
 !image.lock.json
+!image.arm64.lock.json
 !scripts
 !scripts/install-artifacts.py
 !scripts/entrypoint.sh

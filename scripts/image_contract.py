@@ -65,15 +65,22 @@ def validate_url(value):
 
 
 def validate_lock(lock):
+    require(isinstance(lock, dict), "Lock must be an object")
+    profile = lock.get("profile", "full")
+    require(profile in ("full", "rust"), "Unknown image profile")
     required = {
         "schema", "contract_version", "platform", "ubuntu_image", "apt_snapshot",
         "rust_version", "rust_manifest_sha256", "artifacts", "bootstrap_ca",
-        "apt_packages", "java_major", "versions", "android",
+        "apt_packages", "java_major", "versions",
     }
-    require(isinstance(lock, dict) and required <= set(lock) <= required | {"client_codegen"}, "Unknown/missing lock fields")
+    if profile == "full":
+        required.add("android")
+    require(required <= set(lock) <= required | {"client_codegen", "profile"}, "Unknown/missing lock fields")
     require(lock["schema"] == 2 and type(lock["schema"]) is int, "Expected lock schema 2")
     require(lock["contract_version"] == "1", "This recipe supports image contract 1")
-    require(lock["platform"] == "linux/amd64", "Only linux/amd64 is supported")
+    require(lock["platform"] in ("linux/amd64", "linux/arm64"), "Unsupported image platform")
+    require(profile == "rust" or lock["platform"] == "linux/amd64",
+            "Android/KVM images require linux/amd64; use the rust profile on ARM64")
     require(matches(r"ubuntu:24[.]04@sha256:[0-9a-f]{64}", lock["ubuntu_image"]),
             "Ubuntu base must be digest-pinned")
     require(matches(r"[0-9]{8}T[0-9]{6}Z", lock["apt_snapshot"]), "Invalid apt snapshot")
@@ -87,9 +94,10 @@ def validate_lock(lock):
         expected = read_json(recipe)
         require(lock["client_codegen"] == expected, "Client codegen must match the reviewed recipe lock")
     versions = lock["versions"]
-    require(isinstance(versions, dict) and set(versions) == {
-        "runner", "llvm_cov", "nextest", "machete", "cargo_ndk", "protoc", "rustup",
-    }, "Unexpected version keys")
+    version_keys = {"runner", "llvm_cov", "nextest", "machete", "protoc", "rustup"}
+    if profile == "full":
+        version_keys.add("cargo_ndk")
+    require(isinstance(versions, dict) and set(versions) == version_keys, "Unexpected version keys")
     require(all(matches(VERSION, v) for v in versions.values()), "Invalid tool version")
     require(type(lock["java_major"]) is int and lock["java_major"] in (17, 21),
             "Supported JDK major versions: 17, 21")
@@ -114,32 +122,35 @@ def validate_lock(lock):
             "CA bootstrap must come from the selected apt snapshot")
     require(matches(SHA256, ca["sha256"]), "Invalid CA checksum")
     require(matches(r"[A-Za-z0-9.+:~_-]+", ca["version"]), "Invalid CA package version")
-    android = lock["android"]
-    require(isinstance(android, dict) and set(android) == {
-        "api", "build_tools", "ndk", "cmdline_tools", "system_image", "abi",
-    }, "Unknown/missing Android requirements")
-    require(type(android["api"]) is int and 30 <= android["api"] <= 99, "Invalid Android API")
-    require(android["abi"] == "x86_64", "Only x86_64 Android is supported")
-    require(all(matches(VERSION, android[k]) for k in ("build_tools", "ndk", "cmdline_tools")),
-            "Invalid Android component version")
-    require(android["system_image"] == f"system-images;android-{android['api']};default;x86_64",
-            "System image must match the requested API/ABI and default target")
     destinations = {
         "runner": "/opt/actions-runner",
         "cargo-llvm-cov": "/opt/ci/bin/cargo-llvm-cov",
         "cargo-nextest": "/opt/ci/bin/cargo-nextest",
         "cargo-machete": "/opt/ci/bin/cargo-machete",
-        "cargo-ndk": "/opt/ci/bin/cargo-ndk",
         "protoc": "/opt/protoc",
         "rustup-init": "/opt/ci/rustup-init",
-        f"platforms;android-{android['api']}": f"/opt/android-sdk/platforms/android-{android['api']}",
-        f"ndk;{android['ndk']}": f"/opt/android-sdk/ndk/{android['ndk']}",
-        f"build-tools;{android['build_tools']}": f"/opt/android-sdk/build-tools/{android['build_tools']}",
-        f"cmdline-tools;{android['cmdline_tools']}": f"/opt/android-sdk/cmdline-tools/{android['cmdline_tools']}",
-        "platform-tools": "/opt/android-sdk/platform-tools",
-        "emulator": "/opt/android-sdk/emulator",
-        android["system_image"]: "/opt/android-sdk/" + android["system_image"].replace(";", "/"),
     }
+    if profile == "full":
+        android = lock["android"]
+        require(isinstance(android, dict) and set(android) == {
+            "api", "build_tools", "ndk", "cmdline_tools", "system_image", "abi",
+        }, "Unknown/missing Android requirements")
+        require(type(android["api"]) is int and 30 <= android["api"] <= 99, "Invalid Android API")
+        require(android["abi"] == "x86_64", "Only x86_64 Android is supported")
+        require(all(matches(VERSION, android[k]) for k in ("build_tools", "ndk", "cmdline_tools")),
+                "Invalid Android component version")
+        require(android["system_image"] == f"system-images;android-{android['api']};default;x86_64",
+                "System image must match the requested API/ABI and default target")
+        destinations.update({
+            "cargo-ndk": "/opt/ci/bin/cargo-ndk",
+            f"platforms;android-{android['api']}": f"/opt/android-sdk/platforms/android-{android['api']}",
+            f"ndk;{android['ndk']}": f"/opt/android-sdk/ndk/{android['ndk']}",
+            f"build-tools;{android['build_tools']}": f"/opt/android-sdk/build-tools/{android['build_tools']}",
+            f"cmdline-tools;{android['cmdline_tools']}": f"/opt/android-sdk/cmdline-tools/{android['cmdline_tools']}",
+            "platform-tools": "/opt/android-sdk/platform-tools",
+            "emulator": "/opt/android-sdk/emulator",
+            android["system_image"]: "/opt/android-sdk/" + android["system_image"].replace(";", "/"),
+        })
     artifacts = lock["artifacts"]
     require(isinstance(artifacts, list) and len(artifacts) == len(destinations),
             "Exactly the supported artifact set is required")
@@ -190,8 +201,10 @@ def validate_manifest(manifest):
     return manifest
 
 
-def render(lock, template):
+def render(lock, template, lock_file="image.lock.json"):
     validate_lock(lock)
+    require(lock_file in ("image.lock.json", "image.arm64.lock.json"), "Unsupported lock filename")
+    full = lock.get("profile", "full") == "full"
     epoch = int(datetime.datetime.strptime(lock["apt_snapshot"], "%Y%m%dT%H%M%SZ")
                 .replace(tzinfo=datetime.timezone.utc).timestamp())
     values = {
@@ -199,8 +212,21 @@ def render(lock, template):
         "CA_URL": lock["bootstrap_ca"]["url"], "APT_SNAPSHOT": lock["apt_snapshot"],
         "SOURCE_DATE_EPOCH": str(epoch), "APT_PACKAGES": shlex.join(lock["apt_packages"]),
         "CONTRACT_VERSION": lock["contract_version"], "JAVA_MAJOR": str(lock["java_major"]),
-        "NDK_VERSION": lock["android"]["ndk"], "CMDLINE_VERSION": lock["android"]["cmdline_tools"],
+        "ARCH": lock["platform"].split("/")[1], "LOCK_FILE": lock_file,
+        "RUST_TARGETS": "wasm32-unknown-unknown" + (",x86_64-linux-android" if full else ""),
+        "TOOLCHAIN_DIRS": "/opt/ci /opt/actions-runner /opt/protoc /opt/client-codegen-recipe"
+                          + (" /opt/android-sdk" if full else ""),
+        "ANDROID_ENV": "",
+        "ANDROID_PATH": "",
     }
+    if full:
+        android = lock["android"]
+        values["ANDROID_ENV"] = (
+            "    ANDROID_HOME=/opt/android-sdk \\\n"
+            "    ANDROID_SDK_ROOT=/opt/android-sdk \\\n"
+            f"    ANDROID_NDK_HOME=/opt/android-sdk/ndk/{android['ndk']} \\\n")
+        values["ANDROID_PATH"] = (f"/opt/android-sdk/cmdline-tools/{android['cmdline_tools']}/bin:"
+                                  "/opt/android-sdk/platform-tools:/opt/android-sdk/emulator:")
     for key, value in values.items():
         template = template.replace("@@" + key + "@@", value)
     require("@@" not in template, "Unknown Dockerfile template parameter")

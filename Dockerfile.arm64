@@ -1,16 +1,16 @@
-FROM @@BASE_IMAGE@@
+FROM ubuntu:24.04@sha256:11dc1ccb427f0464a2369e645454c272bb0baece7357c892ba69d313b3a332cf
 
 # Minimal Ubuntu has no CA bundle. BuildKit verifies HTTPS and the pinned deb
 # checksum; extract its public roots before apt first contacts the snapshot.
-ADD --checksum=sha256:@@CA_SHA256@@ @@CA_URL@@ /tmp/bootstrap-ca.deb
+ADD --checksum=sha256:641de77d8f142cfd62a1a6f964ba67b20754d3337c480efb529d086075a06c9a https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/c/ca-certificates/ca-certificates_20240203_all.deb /tmp/bootstrap-ca.deb
 
 # The signed Ubuntu archive is frozen, not "whatever noble contains today".
-ARG APT_SNAPSHOT=@@APT_SNAPSHOT@@
-ARG SOURCE_DATE_EPOCH=@@SOURCE_DATE_EPOCH@@
+ARG APT_SNAPSHOT=20260920T000000Z
+ARG SOURCE_DATE_EPOCH=1789862400
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
-RUN test "${TARGETARCH:-@@ARCH@@}" = @@ARCH@@ \
+RUN test "${TARGETARCH:-arm64}" = arm64 \
  && mkdir -p /tmp/bootstrap-ca /etc/ssl/certs \
  && dpkg-deb -x /tmp/bootstrap-ca.deb /tmp/bootstrap-ca \
  && cat /tmp/bootstrap-ca/usr/share/ca-certificates/mozilla/*.crt > /etc/ssl/certs/ca-certificates.crt \
@@ -18,7 +18,7 @@ RUN test "${TARGETARCH:-@@ARCH@@}" = @@ARCH@@ \
  && rm -f /etc/apt/sources.list.d/ubuntu.sources \
  && printf 'deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble main universe\ndeb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble-updates main universe\ndeb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble-security main universe\n' "$APT_SNAPSHOT" "$APT_SNAPSHOT" "$APT_SNAPSHOT" > /etc/apt/sources.list \
  && apt-get update --error-on=any \
- && apt-get install -y --no-install-recommends @@APT_PACKAGES@@ \
+ && apt-get install -y --no-install-recommends ca-certificates curl git gh jq python3 unzip zip xz-utils bzip2 gnupg build-essential clang llvm libsnappy-dev cmake libgmp-dev libssl-dev pkg-config openjdk-17-jdk-headless libicu74 libkrb5-3 zlib1g libgcc-s1 libstdc++6 libcurl4t64 liblttng-ust1t64 libunwind8 libpulse0 libx11-xcb1 libnss3 libxcomposite1 libxcursor1 libxi6 libxrandr2 libxtst6 libasound2t64 libgl1 libegl1 libdbus-1-3 libxdamage1 libxfixes3 \
  && dpkg-query -W -f='${Package}\t${Version}\n' | sort > /usr/share/ci-apt-packages.tsv \
  && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/apt/archives/* \
  && groupadd --gid 1001 runner \
@@ -28,7 +28,7 @@ RUN test "${TARGETARCH:-@@ARCH@@}" = @@ARCH@@ \
  && find /usr /bin /sbin -xdev -type f -perm /6000 -exec chmod a-s {} +
 
 COPY --chmod=755 client-codegen /opt/client-codegen-recipe
-COPY --chmod=644 @@LOCK_FILE@@ /build/image.lock.json
+COPY --chmod=644 image.arm64.lock.json /build/image.lock.json
 COPY scripts/install-artifacts.py /build/install-artifacts.py
 RUN python3 /build/install-artifacts.py \
  && if python3 -c 'import json,sys; sys.exit("client_codegen" not in json.load(open("/build/image.lock.json")))'; then python3 /opt/client-codegen-recipe/build.py /opt/client-codegen; fi \
@@ -37,19 +37,19 @@ RUN python3 /build/install-artifacts.py \
       printf '%s\n' 8933bad161af4178b1185d1a37fbf41ea5269c55 d56f5187479451eabf01fb78af6dfcb131a6481e 24333f8a63b6825ea9c5514f83c2829b004d1fee > /opt/android-sdk/licenses/android-sdk-license; \
     fi \
  && cp /build/image.lock.json /opt/ci/image.lock.json \
- && echo @@CONTRACT_VERSION@@ > /opt/ci/contract-version \
+ && echo 1 > /opt/ci/contract-version \
  && rm -rf /build
 
 ENV HOME=/home/runner \
-    JAVA_HOME=/usr/lib/jvm/java-@@JAVA_MAJOR@@-openjdk-@@ARCH@@ \
-@@ANDROID_ENV@@    PATH=/opt/ci/bin:/opt/protoc/bin:/home/runner/.cargo/bin:@@ANDROID_PATH@@/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64 \
+    PATH=/opt/ci/bin:/opt/protoc/bin:/home/runner/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER 1001:1001
 RUN rust_version=$(python3 -c 'import json; print(json.load(open("/opt/ci/image.lock.json"))["rust_version"])') \
  && manifest_hash=$(python3 -c 'import json; print(json.load(open("/opt/ci/image.lock.json"))["rust_manifest_sha256"])') \
  && curl -fsSL --retry 3 "https://static.rust-lang.org/dist/channel-rust-${rust_version}.toml" -o /tmp/rust-manifest.toml \
  && echo "$manifest_hash  /tmp/rust-manifest.toml" | sha256sum -c - \
  && /opt/ci/rustup-init -y --no-modify-path --profile minimal --default-toolchain "$rust_version" \
-      --component rustfmt,clippy,llvm-tools-preview --target @@RUST_TARGETS@@ \
+      --component rustfmt,clippy,llvm-tools-preview --target wasm32-unknown-unknown \
  && rustup set auto-self-update disable \
  && rm -f /tmp/rust-manifest.toml
 
@@ -62,10 +62,10 @@ RUN [[ "$IMAGE_RECIPE_REVISION" =~ ^[0-9a-f]{40}$ ]] \
  && printf '%s\n' "$IMAGE_RECIPE_REVISION" > /opt/ci/recipe-revision
 COPY --chmod=755 scripts/android-emulator.sh /opt/ci/bin/ci-android-emulator
 RUN rm /opt/ci/rustup-init \
- && find @@TOOLCHAIN_DIRS@@ -type d -exec chmod go-w {} +
+ && find /opt/ci /opt/actions-runner /opt/protoc /opt/client-codegen-recipe -type d -exec chmod go-w {} +
 LABEL org.opencontainers.image.source="https://github.com/dashpay/dash-selfhosted-image" \
       org.opencontainers.image.title="Dash unprivileged self-hosted CI runner" \
-      org.dash.ci.contract="@@CONTRACT_VERSION@@"
+      org.dash.ci.contract="1"
 USER 1001:1001
 WORKDIR /runner
 RUN /opt/ci/bin/verify-image

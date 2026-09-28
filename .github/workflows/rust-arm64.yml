@@ -1,0 +1,102 @@
+name: Build, verify and publish ARM64 Rust runner image
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-image-rust-arm64-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  image:
+    # Native ARM64 compilation; Apple Silicon hosts later run this Linux image
+    # through their Docker VM. No x86 emulation or Android/KVM is required.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Check locked inputs, version parity and source syntax
+        run: |
+          python3 scripts/check-lock.py
+          python3 -m py_compile scripts/*.py
+          python3 -m unittest discover -s tests -v
+          bash -n scripts/entrypoint.sh scripts/android-emulator.sh scripts/smoke-test.sh
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build native ARM64 Rust candidate
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.arm64
+          platforms: linux/arm64
+          load: true
+          tags: dash-selfhosted-image:rust-arm64-test
+          provenance: false
+          build-args: IMAGE_RECIPE_REVISION=${{ github.sha }}
+
+      - name: Prove compilers, Cargo helpers, runner binaries and confinement
+        run: scripts/smoke-test.sh dash-selfhosted-image:rust-arm64-test
+
+      - name: Docker Hub metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: dashpay/dash-selfhosted-image
+          flavor: |
+            latest=false
+            suffix=-rust-arm64
+          tags: |
+            type=sha,format=long
+            type=semver,pattern={{version}}
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Publish the tested ARM64 build
+        id: publish
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.arm64
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          build-args: IMAGE_RECIPE_REVISION=${{ github.sha }}
+
+      - name: Record deployable ARM64 digest
+        if: steps.publish.outcome == 'success'
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          printf 'dashpay/dash-selfhosted-image@%s\n' "$IMAGE_DIGEST" > image-reference.txt
+          {
+            echo '## Verified Linux/ARM64 Rust runner image'
+            cat image-reference.txt
+            echo 'Native compilers, exact tool versions, runner runtime and confinement passed.'
+            echo 'Rust-only: no Android/KVM or macOS/Xcode support. Deployment is separate.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.publish.outcome == 'success'
+        with:
+          name: runner-image-rust-arm64-reference
+          path: |
+            image-reference.txt
+            image.arm64.lock.json
