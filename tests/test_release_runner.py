@@ -83,6 +83,24 @@ class ReleaseRunnerTests(unittest.TestCase):
                 self.assertIn("CARGO_BUILD_JOBS=8", args)
                 self.assertIn("BINARYEN_CORES=" + str(cores), args)
 
+    def test_should_keep_example_optimizer_tuning_independent_of_host_cpu_capacity(self):
+        example = json.loads((ROOT / "deploy/release-controller.example.json").read_text())
+        # Replace installation placeholders, not the example's resource settings.
+        config = dict(example, app_id=1, installation_id=2, runner_group_id=3,
+                      images=dict(npm=IMAGE, kotlin=IMAGE))
+        release.validate_config(config)
+        self.assertEqual(config["binaryen_cores"], 4)
+        for host_cpus, expected in [(32, 20), (64, 52)]:
+            with self.subTest(host_cpus=host_cpus), \
+                 patch.object(release.os, "sched_getaffinity", return_value=set(range(host_cpus))):
+                args = release.docker_arguments(config, self.record, IMAGE, "/state/job.jit")
+                self.assertEqual(args[args.index("--cpus") + 1], str(expected))
+                self.assertIn("CARGO_BUILD_JOBS=" + str(expected), args)
+                self.assertIn("BINARYEN_CORES=4", args)
+        with patch.object(release.os, "sched_getaffinity", return_value=set(range(15))):
+            with self.assertRaisesRegex(ValueError, "no greater than the runner CPU budget"):
+                release.docker_arguments(config, self.record, IMAGE, "/state/job.jit")
+
     def test_should_reject_invalid_binaryen_settings(self):
         for cores in (None, 0, -1, True, 1.5, "4", "auto"):
             with self.subTest(binaryen_cores=cores), self.assertRaisesRegex(ValueError, "binaryen_cores"):

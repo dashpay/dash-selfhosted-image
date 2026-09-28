@@ -88,9 +88,22 @@ The controller gives Docker and `CARGO_BUILD_JOBS` the resolved CPU budget.
 thread pool inside a smaller container quota. Operators may set the optional
 `binaryen_cores` configuration field to a positive integer no greater than the
 resolved CPU budget to tune Binaryen independently without reducing Cargo or
-container capacity. The example deliberately omits this override; use completed
-measurements before choosing a lower value. Quota-sized thread pools are a
-ceiling, not evidence of optimal optimizer throughput.
+container capacity. The example sets `binaryen_cores: 4` for the measured Platform
+WASM release workload while retaining the 20-CPU container/Cargo budget on the
+32-logical-CPU host described above. This is an operator tuning example, not a
+universal optimum or a change to the controller's default. Re-measure for a
+different Binaryen version, module, optimization flags or host. On smaller hosts,
+reduce the override if the resolved CPU budget is below four; allocation fails
+closed rather than silently clamping it.
+
+The controller always exports `BINARYEN_CORES`, even when `binaryen_cores` is
+omitted. A consuming Platform launcher that preserves explicit overrides will
+therefore retain the controller's quota-sized value instead of using its own
+four-thread fallback. To adopt the measured setting on an existing deployment,
+merge `binaryen_cores: 4` into the operator configuration using the drain procedure
+below; updating the source/example alone does not change that configuration.
+Verify new plan/launch output reports `cpus: 20` and `binaryen_cores: 4` for the
+32-CPU example. No image rebuild or shared compilation cache is needed.
 
 Both resolved values are saved in the allocation journal and reported by
 plan/launch output. An override exceeding the resolved CPU budget blocks new
