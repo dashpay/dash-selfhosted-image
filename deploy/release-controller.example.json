@@ -11,6 +11,7 @@
   "max_runners": 1,
   "cpus_per_runner": "auto",
   "reserved_cpus": 12,
+  "binaryen_cores": 4,
   "memory_gib_per_runner": 32,
   "min_free_gib": 100,
   "max_age_seconds": 14400
