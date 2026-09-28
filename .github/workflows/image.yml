@@ -52,6 +52,11 @@ jobs:
       - name: Test without root, capabilities or a host Docker socket
         run: scripts/smoke-test.sh dash-selfhosted-image:test
 
+      - name: Prove disposable release storage and process isolation
+        env:
+          DASH_RELEASE_TEST_IMAGE: dash-selfhosted-image:test
+        run: python3 -m unittest discover -s tests -p test_release_runtime.py -v
+
       - name: Test KVM and boot the pinned Android emulator
         run: scripts/smoke-test.sh dash-selfhosted-image:test --kvm
 

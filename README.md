@@ -5,6 +5,10 @@ merge, see [the PR image lifecycle](docs/platform-pr-images.md). This includes t
 trusted-workflow and host-controller bootstrap; publishing code alone does not
 deploy an autoscaler.
 
+For NPM/Kotlin release builds, see the [disposable release runner
+controller](docs/disposable-releases.md). It reuses the pinned image with fresh
+one-job state; ordinary PR caches remain unchanged.
+
 Rebuildable Linux/amd64 environment for Platform's persistent `rust-ci` and
 `kotlin-ci` jobs. Source and Docker Hub publishing live here; the consuming
 workflow contract lives in [Platform](https://github.com/dashpay/platform/blob/v4.3-dev/.github/SELF_HOSTED_RUNNER.md).

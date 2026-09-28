@@ -1,0 +1,16 @@
+{
+  "app_id": 0,
+  "installation_id": 0,
+  "private_key_file": "/etc/dash-ci-releases/github-app.pem",
+  "runner_group_id": 0,
+  "state_dir": "/var/lib/dash-ci-releases",
+  "images": {
+    "npm": "sha256:REPLACE_WITH_TESTED_LOCAL_IMAGE_ID",
+    "kotlin": "sha256:REPLACE_WITH_TESTED_LOCAL_IMAGE_ID"
+  },
+  "max_runners": 1,
+  "cpus_per_runner": 8,
+  "memory_gib_per_runner": 32,
+  "min_free_gib": 100,
+  "max_age_seconds": 14400
+}
