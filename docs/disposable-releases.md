@@ -83,18 +83,30 @@ overcommit the pool. Insufficient capacity after reservations blocks allocation.
 Memory and disk admission remain independent limits; increasing CPU capacity does
 not relax the configured memory limit or the 16 GiB host memory reserve.
 
-The controller gives Docker, `CARGO_BUILD_JOBS`, and `BINARYEN_CORES` the same
-budget. This avoids Binaryen starting a host-sized thread pool inside a smaller
-container quota. No optimization passes, application sources, or cache isolation
-are changed. The resolved CPU budget is saved in the allocation journal and
-reported by plan/launch output.
+The controller gives Docker and `CARGO_BUILD_JOBS` the resolved CPU budget.
+`BINARYEN_CORES` defaults to that same budget, preventing a host-sized optimizer
+thread pool inside a smaller container quota. Operators may set the optional
+`binaryen_cores` configuration field to a positive integer no greater than the
+resolved CPU budget to tune Binaryen independently without reducing Cargo or
+container capacity. The example deliberately omits this override; use completed
+measurements before choosing a lower value. Quota-sized thread pools are a
+ceiling, not evidence of optimal optimizer throughput.
+
+Both resolved values are saved in the allocation journal and reported by
+plan/launch output. An override exceeding the resolved CPU budget blocks new
+allocations before any Docker or registration changes; it does not prevent
+cleanup of existing allocations. No optimization passes, application sources,
+or cache isolation are changed. Consuming workflows must preserve an explicitly
+provided `BINARYEN_CORES` instead of replacing it with `CARGO_BUILD_JOBS`.
 
 Existing numeric settings, such as `cpus_per_runner: 20`, remain supported as
 explicit operator overrides. Existing config files are not rewritten on upgrade:
 set auto/reservations or a numeric value deliberately during installation.
 Changes affect new workers only; active jobs are not restarted or retuned by the
-controller. Keep the controller on the trusted host, not inside a CPU-limited
-job container. Before adding another co-located worker pool, revise reservations
+controller. Older journal records remain valid for cleanup; records with only a
+CPU budget retain their original equal Binaryen budget. Keep the controller on
+the trusted host, not inside a CPU-limited job container. Before adding another
+co-located worker pool, revise reservations
 and the overall host resource budget.
 
 ## Consumer protocol and branches

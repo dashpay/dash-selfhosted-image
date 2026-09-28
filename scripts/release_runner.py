@@ -45,6 +45,9 @@ def validate_config(config):
     if cpus == "auto" or "reserved_cpus" in config:
         require(type(config.get("reserved_cpus")) is int and config["reserved_cpus"] >= 0,
                 "Configure nonnegative reserved_cpus for the host and other workloads")
+    if "binaryen_cores" in config:
+        require(type(config["binaryen_cores"]) is int and config["binaryen_cores"] > 0,
+                "Configure binaryen_cores as a positive integer")
     require(config["max_runners"] <= 4 and config["max_age_seconds"] <= 14400,
             "Release capacity and lifetime must stay bounded")
     for key in ("state_dir", "private_key_file"):
@@ -68,6 +71,14 @@ def cpu_budget(config):
     require(available >= config["max_runners"],
             "Insufficient CPUs after reservations for all configured release slots")
     return available // config["max_runners"]
+
+
+def binaryen_budget(config, cpus):
+    """Allow independent optimizer tuning within the resolved runner CPU budget."""
+    cores = config.get("binaryen_cores", cpus)
+    require(type(cores) is int and 0 < cores <= cpus,
+            "binaryen_cores must be a positive integer no greater than the runner CPU budget")
+    return cores
 
 
 def parse_job(run, job):
@@ -146,6 +157,9 @@ def docker_arguments(config, record, image_id, jit_path):
     """All writable state is fresh; HOME lives in the disposable image layer."""
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", image_id), "Expected an immutable local image ID")
     cpus = record["cpus"] if "cpus" in record else cpu_budget(config)
+    # Keep journaled settings stable across config changes. Older records with
+    # only cpus used the same budget for Binaryen; do not retune them implicitly.
+    binaryen_cores = binaryen_budget(record if "cpus" in record else config, cpus)
     args = [
         "docker", "run", "--detach", "--init", "--name", record["name"],
         "--restart", "no", "--pull", "never", "--user", "1001:1001",
@@ -164,7 +178,7 @@ def docker_arguments(config, record, image_id, jit_path):
         "--env", "DASH_RELEASE_KIND=" + record["kind"],
         "--env", "CARGO_BUILD_JOBS=" + str(cpus),
         # Binaryen otherwise sees every host CPU, ignoring the Docker quota.
-        "--env", "BINARYEN_CORES=" + str(cpus),
+        "--env", "BINARYEN_CORES=" + str(binaryen_cores),
     ]
     # NPM and Kotlin RELEASE builds need no emulator, KVM, Docker or host mounts.
     return args + [image_id, "jit"]
@@ -228,6 +242,7 @@ def cleanup(api, config, state, record):
 def launch(api, config, state, journal, run, job):
     kind, label = parse_job(run, job)
     cpus = cpu_budget(config)
+    binaryen_cores = binaryen_budget(config, cpus)
     reference = config["images"][kind]
     image = docker_json("image", "inspect", reference)[0]
     require(image.get("Os") == "linux" and image.get("Architecture") == "amd64"
@@ -249,7 +264,8 @@ def launch(api, config, state, journal, run, job):
     name = f"platform-release-{job['id']}-{uuid.uuid4().hex[:12]}"
     record = {"name": name, "job_id": job["id"], "run_id": run["id"],
               "attempt": run["run_attempt"], "kind": kind, "created": int(time.time()),
-              "image": image["Id"], "phase": "starting", "cpus": cpus}
+              "image": image["Id"], "phase": "starting", "cpus": cpus,
+              "binaryen_cores": binaryen_cores}
     journal["allocations"][name] = record
     save(state / "journal.json", journal)
     for suffix in ("registration", "work"):
@@ -273,15 +289,17 @@ def launch(api, config, state, journal, run, job):
     record["phase"] = "running"
     save(state / "journal.json", journal)
     print(json.dumps({"job": job["id"], "runner": name, "image": image["Id"],
-                      "cpus": cpus}), flush=True)
+                      "cpus": cpus, "binaryen_cores": binaryen_cores}), flush=True)
 
 
 def reconcile(api, config, apply=False, drain=False):
     if not apply:
         for run, job in queued_jobs(api):
             kind, _ = parse_job(run, job)
+            cpus = cpu_budget(config)
             print(json.dumps({"job": job["id"], "action": "would-start",
-                              "image": config["images"][kind], "cpus": cpu_budget(config)}))
+                              "image": config["images"][kind], "cpus": cpus,
+                              "binaryen_cores": binaryen_budget(config, cpus)}))
         return
     state = Path(config["state_dir"])
     path = state / "journal.json"
