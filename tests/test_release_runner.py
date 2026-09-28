@@ -42,6 +42,44 @@ class ReleaseRunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.validate_config(dict(self.config, **{key: value}))
 
+    def test_should_use_the_host_cpu_pool_instead_of_an_eight_cpu_default(self):
+        config = dict(self.config, cpus_per_runner="auto", reserved_cpus=12)
+        release.validate_config(config)
+        for host_cpus, slots, expected in [(32, 1, 20), (64, 1, 52), (16, 1, 4),
+                                           (32, 2, 10), (33, 2, 10)]:
+            with self.subTest(host_cpus=host_cpus, slots=slots), \
+                 patch.object(release.os, "sched_getaffinity", return_value=set(range(host_cpus))):
+                self.assertEqual(release.cpu_budget(dict(config, max_runners=slots)), expected)
+
+    def test_should_reject_invalid_or_exhausted_cpu_reservations(self):
+        for value in (0, -1, True, 1.5, "20", "maximum"):
+            with self.subTest(cpus=value), self.assertRaises(ValueError):
+                release.validate_config(dict(self.config, cpus_per_runner=value))
+        for reserve in (None, -1, True, 1.5, "12"):
+            with self.subTest(reserve=reserve), self.assertRaises(ValueError):
+                release.validate_config(dict(self.config, cpus_per_runner="auto", reserved_cpus=reserve))
+        with patch.object(release.os, "sched_getaffinity", return_value=set(range(8))):
+            for reserve, slots in [(8, 1), (12, 1), (7, 2)]:
+                config = dict(self.config, cpus_per_runner="auto", reserved_cpus=reserve, max_runners=slots)
+                with self.subTest(reserve=reserve, slots=slots), self.assertRaisesRegex(ValueError, "Insufficient CPUs"):
+                    release.cpu_budget(config)
+
+    def test_should_keep_explicit_cpu_settings_and_align_optimizer_threads(self):
+        for cpus in (8, 20):
+            config = dict(self.config, cpus_per_runner=cpus)
+            release.validate_config(config)
+            args = release.docker_arguments(config, self.record, IMAGE, "/state/job.jit")
+            self.assertEqual(args[args.index("--cpus") + 1], str(cpus))
+            self.assertIn("CARGO_BUILD_JOBS=" + str(cpus), args)
+            self.assertIn("BINARYEN_CORES=" + str(cpus), args)
+
+    def test_should_honor_the_recorded_cpu_budget_for_a_launch(self):
+        config = dict(self.config, cpus_per_runner="auto", reserved_cpus=12)
+        with patch.object(release.os, "sched_getaffinity", side_effect=AssertionError("already resolved")):
+            args = release.docker_arguments(config, dict(self.record, cpus=20), IMAGE, "/state/job.jit")
+        self.assertEqual(args[args.index("--cpus") + 1], "20")
+        self.assertIn("BINARYEN_CORES=20", args)
+
     def test_should_bind_job_to_run_attempt_commit_and_kind(self):
         self.assertEqual(release.parse_job(self.run, self.job), ("npm", "platform-release-123-2-npm"))
         for key, value in [("run_id", 124), ("head_sha", "c" * 40), ("status", "completed")]:
@@ -118,6 +156,7 @@ class ReleaseRunnerTests(unittest.TestCase):
 
     def test_should_journal_before_registering_and_keep_jit_until_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
+            config = dict(self.config, cpus_per_runner="auto", reserved_cpus=12)
             state = Path(directory)
             journal = dict(allocations={}, attempts={})
             commands = []
@@ -133,16 +172,20 @@ class ReleaseRunnerTests(unittest.TestCase):
             image = dict(Id=IMAGE, Os="linux", Architecture="amd64",
                          Config=dict(User="1001:1001", Entrypoint=["/opt/ci/bin/runner-entrypoint"]))
             with patch.object(release, "docker_json", return_value=[image]), \
+                 patch.object(release.os, "sched_getaffinity", return_value=set(range(32))), \
                  patch.object(release, "docker_exists", return_value=False), \
                  patch.object(release.subprocess, "check_output", return_value="/docker\n"), \
                  patch.object(release.subprocess, "run", side_effect=lambda args, **kwargs: commands.append(args)), \
                  patch.object(release.shutil, "disk_usage", return_value=SimpleNamespace(free=1024**4)), \
                  patch.object(release.Path, "read_text", return_value="MemAvailable: 999999999 kB\n"), \
                  patch.object(release.os, "chown"):
-                release.launch(api, self.config, state, journal, self.run, self.job)
+                release.launch(api, config, state, journal, self.run, self.job)
             record = next(iter(journal["allocations"].values()))
             self.assertEqual(record["runner_id"], 9)
             self.assertEqual(record["phase"], "running")
+            self.assertEqual(record["cpus"], 20)
+            self.assertEqual(commands[-1][commands[-1].index("--cpus") + 1], "20")
+            self.assertIn("BINARYEN_CORES=20", commands[-1])
             jit = state / (record["name"] + ".jit")
             self.assertEqual(jit.stat().st_mode & 0o777, 0o400)
             self.assertEqual(commands[-1][-2:], [IMAGE, "jit"])

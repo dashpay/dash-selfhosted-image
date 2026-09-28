@@ -66,6 +66,37 @@ The existing CI registrations/services/volumes are never touched. This repositor
 does not create the App/group or change fork-approval policy automatically.
 Keep fork approvals and publishing controls appropriate for the public repos.
 
+## CPU sizing
+
+The example uses `cpus_per_runner: "auto"`. Each new worker receives
+`floor((available logical CPUs - reserved_cpus) / max_runners)` CPUs, using the
+controller's CPU affinity rather than assuming every host has eight CPUs.
+`reserved_cpus` is the operator's capacity reservation for the OS and other
+workloads, including other CI pools. Review it against the host inventory; it is
+not a measurement of momentary idle CPU or a cross-controller scheduler.
+
+For the current 32-logical-CPU host, reserve 12 (eight for NPM validation and four
+for host services), with `max_runners: 1`: each release worker gets **20 CPUs**.
+A 64-CPU host with the same reservation gets 52. Two release slots split the
+release pool equally, including when one slot is idle, so later arrivals do not
+overcommit the pool. Insufficient capacity after reservations blocks allocation.
+Memory and disk admission remain independent limits; increasing CPU capacity does
+not relax the configured memory limit or the 16 GiB host memory reserve.
+
+The controller gives Docker, `CARGO_BUILD_JOBS`, and `BINARYEN_CORES` the same
+budget. This avoids Binaryen starting a host-sized thread pool inside a smaller
+container quota. No optimization passes, application sources, or cache isolation
+are changed. The resolved CPU budget is saved in the allocation journal and
+reported by plan/launch output.
+
+Existing numeric settings, such as `cpus_per_runner: 20`, remain supported as
+explicit operator overrides. Existing config files are not rewritten on upgrade:
+set auto/reservations or a numeric value deliberately during installation.
+Changes affect new workers only; active jobs are not restarted or retuned by the
+controller. Keep the controller on the trusted host, not inside a CPU-limited
+job container. Before adding another co-located worker pool, revise reservations
+and the overall host resource budget.
+
 ## Consumer protocol and branches
 
 NPM and Kotlin build jobs must request:

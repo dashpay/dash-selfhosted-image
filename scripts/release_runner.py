@@ -36,9 +36,15 @@ WORKFLOWS = {
 
 def validate_config(config):
     for key in ("app_id", "installation_id", "runner_group_id", "max_runners",
-                "cpus_per_runner", "memory_gib_per_runner", "min_free_gib",
+                "memory_gib_per_runner", "min_free_gib",
                 "max_age_seconds"):
         require(type(config.get(key)) is int and config[key] > 0, "Configure a positive " + key)
+    cpus = config.get("cpus_per_runner")
+    require(cpus == "auto" or (type(cpus) is int and cpus > 0),
+            "Configure cpus_per_runner as a positive integer or auto")
+    if cpus == "auto" or "reserved_cpus" in config:
+        require(type(config.get("reserved_cpus")) is int and config["reserved_cpus"] >= 0,
+                "Configure nonnegative reserved_cpus for the host and other workloads")
     require(config["max_runners"] <= 4 and config["max_age_seconds"] <= 14400,
             "Release capacity and lifetime must stay bounded")
     for key in ("state_dir", "private_key_file"):
@@ -52,6 +58,16 @@ def validate_config(config):
             r"(?:" + re.escape(IMAGE) + r"@)?sha256:[0-9a-f]{64}", reference),
             "Use a local image ID or an immutable Dash image digest, never a tag")
     return config
+
+
+def cpu_budget(config):
+    """Split the configured release CPU pool across its maximum concurrent jobs."""
+    if config["cpus_per_runner"] != "auto":
+        return config["cpus_per_runner"]
+    available = len(os.sched_getaffinity(0)) - config["reserved_cpus"]
+    require(available >= config["max_runners"],
+            "Insufficient CPUs after reservations for all configured release slots")
+    return available // config["max_runners"]
 
 
 def parse_job(run, job):
@@ -129,11 +145,12 @@ def owned_resource(kind, name, owner):
 def docker_arguments(config, record, image_id, jit_path):
     """All writable state is fresh; HOME lives in the disposable image layer."""
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", image_id), "Expected an immutable local image ID")
+    cpus = record["cpus"] if "cpus" in record else cpu_budget(config)
     args = [
         "docker", "run", "--detach", "--init", "--name", record["name"],
         "--restart", "no", "--pull", "never", "--user", "1001:1001",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true",
-        "--cpus", str(config["cpus_per_runner"]),
+        "--cpus", str(cpus),
         "--memory", f"{config['memory_gib_per_runner']}g", "--pids-limit", "4096",
         "--log-opt", "max-size=10m", "--log-opt", "max-file=3",
         "--label", MANAGED + "=1", "--label", OWNER + "=" + record["name"],
@@ -145,7 +162,9 @@ def docker_arguments(config, record, image_id, jit_path):
         "--env", "DASH_RELEASE_RUN_ID=" + str(record["run_id"]),
         "--env", "DASH_RELEASE_RUN_ATTEMPT=" + str(record["attempt"]),
         "--env", "DASH_RELEASE_KIND=" + record["kind"],
-        "--env", "CARGO_BUILD_JOBS=" + str(config["cpus_per_runner"]),
+        "--env", "CARGO_BUILD_JOBS=" + str(cpus),
+        # Binaryen otherwise sees every host CPU, ignoring the Docker quota.
+        "--env", "BINARYEN_CORES=" + str(cpus),
     ]
     # NPM and Kotlin RELEASE builds need no emulator, KVM, Docker or host mounts.
     return args + [image_id, "jit"]
@@ -208,6 +227,7 @@ def cleanup(api, config, state, record):
 
 def launch(api, config, state, journal, run, job):
     kind, label = parse_job(run, job)
+    cpus = cpu_budget(config)
     reference = config["images"][kind]
     image = docker_json("image", "inspect", reference)[0]
     require(image.get("Os") == "linux" and image.get("Architecture") == "amd64"
@@ -229,7 +249,7 @@ def launch(api, config, state, journal, run, job):
     name = f"platform-release-{job['id']}-{uuid.uuid4().hex[:12]}"
     record = {"name": name, "job_id": job["id"], "run_id": run["id"],
               "attempt": run["run_attempt"], "kind": kind, "created": int(time.time()),
-              "image": image["Id"], "phase": "starting"}
+              "image": image["Id"], "phase": "starting", "cpus": cpus}
     journal["allocations"][name] = record
     save(state / "journal.json", journal)
     for suffix in ("registration", "work"):
@@ -252,7 +272,8 @@ def launch(api, config, state, journal, run, job):
                    stdout=subprocess.DEVNULL)
     record["phase"] = "running"
     save(state / "journal.json", journal)
-    print(json.dumps({"job": job["id"], "runner": name, "image": image["Id"]}), flush=True)
+    print(json.dumps({"job": job["id"], "runner": name, "image": image["Id"],
+                      "cpus": cpus}), flush=True)
 
 
 def reconcile(api, config, apply=False, drain=False):
@@ -260,7 +281,7 @@ def reconcile(api, config, apply=False, drain=False):
         for run, job in queued_jobs(api):
             kind, _ = parse_job(run, job)
             print(json.dumps({"job": job["id"], "action": "would-start",
-                              "image": config["images"][kind]}))
+                              "image": config["images"][kind], "cpus": cpu_budget(config)}))
         return
     state = Path(config["state_dir"])
     path = state / "journal.json"
