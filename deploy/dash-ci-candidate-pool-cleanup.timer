@@ -1,0 +1,11 @@
+[Unit]
+Description=Enforce candidate exit cleanup and maximum lifetime without GitHub
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=30
+AccuracySec=2
+Unit=dash-ci-candidate-pool-cleanup.service
+
+[Install]
+WantedBy=timers.target
