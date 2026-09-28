@@ -1,0 +1,21 @@
+{
+  "state": "pending",
+  "sha": "a02b1460736e18b6345bb4722c622e55e787371d",
+  "total_count": 4,
+  "url": "https://api.github.com/repos/dashpay/platform/commits/a02b1460736e18b6345bb4722c622e55e787371d/status",
+  "commit_url": "https://api.github.com/repos/dashpay/platform/commits/a02b1460736e18b6345bb4722c622e55e787371d",
+  "statuses": [
+    {
+      "url": "https://api.github.com/repos/dashpay/platform/statuses/a02b1460736e18b6345bb4722c622e55e787371d",
+      "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+      "id": 55116170875,
+      "node_id": "SC_kwDOGUlHz88AAAAM1S4Gew",
+      "state": "success",
+      "description": "sha256:e5ebd957d28d15976320023b76cffa8b982e1d131c572d92eb9c91814dbf807b",
+      "target_url": "https://github.com/dashpay/platform/actions/runs/36474975257",
+      "context": "Runner image candidate / PR 5151",
+      "created_at": "2026-09-28T20:13:10Z",
+      "updated_at": "2026-09-28T20:13:10Z"
+    }
+  ]
+}

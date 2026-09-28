@@ -1,0 +1,37 @@
+{
+  "id": 36474975257,
+  "path": ".github/workflows/runner-image-candidate.yml",
+  "event": "pull_request_target",
+  "status": "completed",
+  "conclusion": "success",
+  "head_sha": "a02b1460736e18b6345bb4722c622e55e787371d",
+  "html_url": "https://github.com/dashpay/platform/actions/runs/36474975257",
+  "pull_requests": [
+    {
+      "url": "https://api.github.com/repos/dashpay/platform/pulls/5151",
+      "id": 4668056536,
+      "number": 5151,
+      "head": {
+        "ref": "chore/merge-v4.2-into-v4.3-dev",
+        "sha": "a02b1460736e18b6345bb4722c622e55e787371d",
+        "repo": {
+          "id": 424232911,
+          "url": "https://api.github.com/repos/dashpay/platform",
+          "name": "platform"
+        }
+      },
+      "base": {
+        "ref": "v4.3-dev",
+        "sha": "67340ad82406cb36147234bc46f6c572c78ecef9",
+        "repo": {
+          "id": 424232911,
+          "url": "https://api.github.com/repos/dashpay/platform",
+          "name": "platform"
+        }
+      }
+    }
+  ],
+  "repository": {
+    "full_name": "dashpay/platform"
+  }
+}
