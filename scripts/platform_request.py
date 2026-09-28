@@ -130,12 +130,20 @@ def inspect_published(reference, record):
 
 def candidate_digest(api, record):
     validate_request(record)
-    statuses = api.call(f"repos/{PLATFORM}/commits/{record['head_sha']}/status")["statuses"]
-    candidates = [item for item in statuses if item["context"] == f"{CONTEXT} / PR {record['pr']}"]
-    require(len(candidates) == 1 and candidates[0]["state"] == "success",
+    context = f"{CONTEXT} / PR {record['pr']}"
+    page = 1
+    while True:
+        statuses = api.call(f"repos/{PLATFORM}/commits/{record['head_sha']}/statuses?per_page=100&page={page}")
+        # GitHub contexts are case-insensitive and statuses newest first; select before validating.
+        candidate = next((item for item in statuses
+                          if item["context"].casefold() == context.casefold()), None)
+        if candidate is not None or len(statuses) < 100:
+            break
+        page += 1
+    require(candidate is not None and candidate["context"] == context and candidate["state"] == "success",
             "No successfully published candidate for this PR head")
-    candidate = candidates[0]
-    require(candidate.get("creator", {}).get("login") == "github-actions[bot]",
+    creator = candidate.get("creator")
+    require(isinstance(creator, dict) and creator.get("login") == "github-actions[bot]",
             "Candidate status was not created by GitHub Actions")
     match = re.fullmatch(r"https://github[.]com/dashpay/platform/actions/runs/([0-9]+)",
                          candidate.get("target_url", ""))

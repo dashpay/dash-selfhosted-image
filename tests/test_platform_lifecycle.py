@@ -157,11 +157,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(args[args.index("--group-add") + 1], "108")
 
     def test_publisher_status_must_be_from_successful_trusted_workflow(self):
-        status_path = f"repos/{PLATFORM}/commits/{HEAD}/status"
+        status_path = f"repos/{PLATFORM}/commits/{HEAD}/statuses?per_page=100&page=1"
         candidate = {"context": "Runner image candidate / PR 4702", "state": "success", "description": DIGEST,
                      "creator": {"login": "github-actions[bot]"},
                      "target_url": "https://github.com/dashpay/platform/actions/runs/7"}
-        self.api.responses[status_path] = {"statuses": [candidate]}
+        self.api.responses[status_path] = [candidate]
         self.api.responses[f"repos/{PLATFORM}/actions/runs/7"] = {
             "path": ".github/workflows/runner-image-candidate.yml",
             "event": "pull_request_target", "conclusion": "success",
