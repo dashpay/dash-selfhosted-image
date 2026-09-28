@@ -23,6 +23,42 @@ class ImageContractTests(unittest.TestCase):
                                 (ROOT / "Dockerfile.template").read_text()),
                          (ROOT / "Dockerfile").read_text())
 
+    def test_arm64_rust_profile_uses_native_tools_without_android(self):
+        arm = read_json(ROOT / "image.arm64.lock.json")
+        validate_manifest({**self.manifest, "requirements": arm})
+        rendered = render(arm, (ROOT / "Dockerfile.template").read_text(), 'image.arm64.lock.json')
+        self.assertEqual(rendered, (ROOT / "Dockerfile.arm64").read_text())
+        self.assertIn('test "${TARGETARCH:-arm64}" = arm64', rendered)
+        self.assertIn('JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64', rendered)
+        self.assertNotIn('ANDROID_HOME=', rendered)
+        self.assertNotIn('x86_64-linux-android', rendered)
+        self.assertEqual({a['name'] for a in arm['artifacts']},
+                         {'runner', 'cargo-nextest', 'cargo-llvm-cov', 'cargo-machete', 'protoc', 'rustup-init'})
+
+    def test_android_profile_cannot_be_scheduled_as_arm64(self):
+        self.manifest['requirements']['platform'] = 'linux/arm64'
+        with self.assertRaisesRegex(ValueError, 'Android/KVM'):
+            validate_manifest(self.manifest)
+
+    def test_rust_profile_rejects_android_artifacts_and_unknown_profiles(self):
+        arm = read_json(ROOT / 'image.arm64.lock.json')
+        self.manifest['requirements'] = arm
+        arm['profile'] = 'anything'
+        with self.assertRaisesRegex(ValueError, 'Unknown image profile'):
+            validate_manifest(self.manifest)
+        arm['profile'] = 'rust'
+        full = read_json(ROOT / 'image.lock.json')
+        arm['artifacts'].append(next(a for a in full['artifacts'] if a['name'] == 'emulator'))
+        with self.assertRaisesRegex(ValueError, 'supported artifact set'):
+            validate_manifest(self.manifest)
+
+    def test_architecture_and_profile_are_part_of_exact_image_identity(self):
+        arm = read_json(ROOT / 'image.arm64.lock.json')
+        changed = {**self.manifest, 'requirements': arm}
+        self.assertNotEqual(fingerprint(self.manifest), fingerprint(changed))
+        self.assertIn('requirements.platform', differences(self.manifest, changed))
+        self.assertIn('requirements.profile', differences(self.manifest, changed))
+
     def test_hash_is_key_order_independent_but_binds_recipe_and_requirements(self):
         reordered = dict(reversed(list(self.manifest.items())))
         self.assertEqual(fingerprint(reordered), fingerprint(self.manifest))

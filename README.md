@@ -9,6 +9,13 @@ Rebuildable Linux/amd64 environment for Platform's persistent `rust-ci` and
 `kotlin-ci` jobs. Source and Docker Hub publishing live here; the consuming
 workflow contract lives in [Platform](https://github.com/dashpay/platform/blob/v4.3-dev/.github/SELF_HOSTED_RUNNER.md).
 
+An additional native **Linux/ARM64 Rust-only** image supports Linux Docker VMs on
+Apple Silicon Macs. It shares the template, pinned Rust tool versions and smoke
+tests with AMD64, while retaining native macOS runners for Swift/Xcode. See
+[Apple Silicon Rust runners](docs/apple-silicon-rust.md) for build commands and
+the separate Platform integration/deployment gates. The Android/KVM workload
+remains on AMD64; existing runner routing is not changed by this repository.
+
 ## Locked inputs
 
 `image.lock.json` records the Ubuntu 24.04 **digest**, signed Ubuntu archive
