@@ -42,6 +42,88 @@ class ReleaseRunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.validate_config(dict(self.config, **{key: value}))
 
+    def test_should_use_the_host_cpu_pool_instead_of_an_eight_cpu_default(self):
+        config = dict(self.config, cpus_per_runner="auto", reserved_cpus=12)
+        release.validate_config(config)
+        for host_cpus, slots, expected in [(32, 1, 20), (64, 1, 52), (16, 1, 4),
+                                           (32, 2, 10), (33, 2, 10)]:
+            with self.subTest(host_cpus=host_cpus, slots=slots), \
+                 patch.object(release.os, "sched_getaffinity", return_value=set(range(host_cpus))):
+                self.assertEqual(release.cpu_budget(dict(config, max_runners=slots)), expected)
+
+    def test_should_reject_invalid_or_exhausted_cpu_reservations(self):
+        for value in (0, -1, True, 1.5, "20", "maximum"):
+            with self.subTest(cpus=value), self.assertRaises(ValueError):
+                release.validate_config(dict(self.config, cpus_per_runner=value))
+        for reserve in (None, -1, True, 1.5, "12"):
+            with self.subTest(reserve=reserve), self.assertRaises(ValueError):
+                release.validate_config(dict(self.config, cpus_per_runner="auto", reserved_cpus=reserve))
+        with patch.object(release.os, "sched_getaffinity", return_value=set(range(8))):
+            for reserve, slots in [(8, 1), (12, 1), (7, 2)]:
+                config = dict(self.config, cpus_per_runner="auto", reserved_cpus=reserve, max_runners=slots)
+                with self.subTest(reserve=reserve, slots=slots), self.assertRaisesRegex(ValueError, "Insufficient CPUs"):
+                    release.cpu_budget(config)
+
+    def test_should_keep_explicit_cpu_settings_and_align_optimizer_threads(self):
+        for cpus in (8, 20):
+            config = dict(self.config, cpus_per_runner=cpus)
+            release.validate_config(config)
+            args = release.docker_arguments(config, self.record, IMAGE, "/state/job.jit")
+            self.assertEqual(args[args.index("--cpus") + 1], str(cpus))
+            self.assertIn("CARGO_BUILD_JOBS=" + str(cpus), args)
+            self.assertIn("BINARYEN_CORES=" + str(cpus), args)
+
+    def test_should_tune_binaryen_without_reducing_container_or_cargo_capacity(self):
+        for cores in (1, 4, 8):
+            with self.subTest(binaryen_cores=cores):
+                config = dict(self.config, binaryen_cores=cores)
+                release.validate_config(config)
+                args = release.docker_arguments(config, self.record, IMAGE, "/state/job.jit")
+                self.assertEqual(args[args.index("--cpus") + 1], "8")
+                self.assertIn("CARGO_BUILD_JOBS=8", args)
+                self.assertIn("BINARYEN_CORES=" + str(cores), args)
+
+    def test_should_reject_invalid_binaryen_settings(self):
+        for cores in (None, 0, -1, True, 1.5, "4", "auto"):
+            with self.subTest(binaryen_cores=cores), self.assertRaisesRegex(ValueError, "binaryen_cores"):
+                release.validate_config(dict(self.config, binaryen_cores=cores))
+
+    def test_should_reject_binaryen_above_resolved_budget_before_launch_side_effects(self):
+        configs = [dict(self.config, binaryen_cores=9),
+                   dict(self.config, cpus_per_runner="auto", reserved_cpus=12, binaryen_cores=5)]
+        for config in configs:
+            with self.subTest(cpus=config["cpus_per_runner"]), \
+                 patch.object(release.os, "sched_getaffinity", return_value=set(range(16))), \
+                 patch.object(release, "docker_json") as docker, \
+                 patch.object(release, "save") as save:
+                # Dynamic capacity is checked at launch, not before cleanup.
+                release.validate_config(config)
+                api = Mock()
+                journal = dict(allocations={})
+                with self.assertRaisesRegex(ValueError, "no greater than the runner CPU budget"):
+                    release.launch(api, config, Path("/state"), journal, self.run, self.job)
+                self.assertEqual(journal, dict(allocations={}))
+                docker.assert_not_called()
+                save.assert_not_called()
+                api.call.assert_not_called()
+
+    def test_should_honor_the_recorded_cpu_budget_for_a_launch(self):
+        config = dict(self.config, cpus_per_runner="auto", reserved_cpus=12, binaryen_cores=4)
+        with patch.object(release.os, "sched_getaffinity", side_effect=AssertionError("already resolved")):
+            args = release.docker_arguments(config, dict(self.record, cpus=20), IMAGE, "/state/job.jit")
+        self.assertEqual(args[args.index("--cpus") + 1], "20")
+        # Legacy journals predate the independent setting; retain their default.
+        self.assertIn("BINARYEN_CORES=20", args)
+
+    def test_should_honor_both_journaled_budgets_after_configuration_changes(self):
+        config = dict(self.config, cpus_per_runner="auto", reserved_cpus=12, binaryen_cores=1)
+        record = dict(self.record, cpus=20, binaryen_cores=4)
+        with patch.object(release.os, "sched_getaffinity", side_effect=AssertionError("already resolved")):
+            args = release.docker_arguments(config, record, IMAGE, "/state/job.jit")
+        self.assertEqual(args[args.index("--cpus") + 1], "20")
+        self.assertIn("CARGO_BUILD_JOBS=20", args)
+        self.assertIn("BINARYEN_CORES=4", args)
+
     def test_should_bind_job_to_run_attempt_commit_and_kind(self):
         self.assertEqual(release.parse_job(self.run, self.job), ("npm", "platform-release-123-2-npm"))
         for key, value in [("run_id", 124), ("head_sha", "c" * 40), ("status", "completed")]:
@@ -117,7 +199,13 @@ class ReleaseRunnerTests(unittest.TestCase):
                 release.owned_resource("container", self.record["name"], self.record["name"])
 
     def test_should_journal_before_registering_and_keep_jit_until_cleanup(self):
+        for override, expected_cores in [({}, 20), ({"binaryen_cores": 4}, 4)]:
+            with self.subTest(override=override):
+                self.check_journaled_launch(override, expected_cores)
+
+    def check_journaled_launch(self, override, expected_cores):
         with tempfile.TemporaryDirectory() as directory:
+            config = dict(self.config, cpus_per_runner="auto", reserved_cpus=12, **override)
             state = Path(directory)
             journal = dict(allocations={}, attempts={})
             commands = []
@@ -126,6 +214,8 @@ class ReleaseRunnerTests(unittest.TestCase):
                 if path.endswith("generate-jitconfig"):
                     saved = json.loads((state / "journal.json").read_bytes())
                     self.assertIn(data["name"], saved["allocations"])
+                    self.assertEqual(saved["allocations"][data["name"]]["cpus"], 20)
+                    self.assertEqual(saved["allocations"][data["name"]]["binaryen_cores"], expected_cores)
                     self.assertEqual(len(commands), 2)  # Both fresh volumes exist first.
                     return dict(runner=dict(id=9), encoded_jit_config="test-only-placeholder")
                 return self.job if "/jobs/" in path else self.run
@@ -133,16 +223,21 @@ class ReleaseRunnerTests(unittest.TestCase):
             image = dict(Id=IMAGE, Os="linux", Architecture="amd64",
                          Config=dict(User="1001:1001", Entrypoint=["/opt/ci/bin/runner-entrypoint"]))
             with patch.object(release, "docker_json", return_value=[image]), \
+                 patch.object(release.os, "sched_getaffinity", return_value=set(range(32))), \
                  patch.object(release, "docker_exists", return_value=False), \
                  patch.object(release.subprocess, "check_output", return_value="/docker\n"), \
                  patch.object(release.subprocess, "run", side_effect=lambda args, **kwargs: commands.append(args)), \
                  patch.object(release.shutil, "disk_usage", return_value=SimpleNamespace(free=1024**4)), \
                  patch.object(release.Path, "read_text", return_value="MemAvailable: 999999999 kB\n"), \
                  patch.object(release.os, "chown"):
-                release.launch(api, self.config, state, journal, self.run, self.job)
+                release.launch(api, config, state, journal, self.run, self.job)
             record = next(iter(journal["allocations"].values()))
             self.assertEqual(record["runner_id"], 9)
             self.assertEqual(record["phase"], "running")
+            self.assertEqual(record["cpus"], 20)
+            self.assertEqual(record["binaryen_cores"], expected_cores)
+            self.assertEqual(commands[-1][commands[-1].index("--cpus") + 1], "20")
+            self.assertIn("BINARYEN_CORES=" + str(expected_cores), commands[-1])
             jit = state / (record["name"] + ".jit")
             self.assertEqual(jit.stat().st_mode & 0o777, 0o400)
             self.assertEqual(commands[-1][-2:], [IMAGE, "jit"])
@@ -181,7 +276,7 @@ class ReleaseRunnerTests(unittest.TestCase):
                 self.assertFalse(release.cleanup(api, self.config, Path(directory), self.record))
             api.call.assert_not_called()
 
-    def reconcile_record(self, status, now=101, running=True, api_error=None):
+    def reconcile_record(self, status, now=101, running=True, api_error=None, **config_overrides):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         state = Path(directory.name)
@@ -195,7 +290,8 @@ class ReleaseRunnerTests(unittest.TestCase):
         with patch.object(release, "owned_resource", return_value=dict(State=dict(Running=running))), \
              patch.object(release, "cleanup", return_value=True) as cleanup, \
              patch.object(release.time, "time", return_value=now):
-            release.reconcile(api, dict(self.config, state_dir=str(state)), apply=True, drain=True)
+            release.reconcile(api, dict(self.config, state_dir=str(state), **config_overrides),
+                              apply=True, drain=True)
         return cleanup.call_count, json.loads((state / "journal.json").read_text())
 
     def test_should_preserve_a_live_job_but_remove_a_completed_or_cancelled_job(self):
@@ -205,6 +301,19 @@ class ReleaseRunnerTests(unittest.TestCase):
         self.assertFalse(journal["allocations"])
         self.assertEqual(self.reconcile_record("in_progress", running=False)[0], 1)
 
+    def test_should_preserve_and_cleanup_legacy_workers_despite_new_over_budget_override(self):
+        for cpus in (None, 20):
+            with self.subTest(recorded_cpus=cpus):
+                if cpus is not None:
+                    self.record["cpus"] = cpus
+                with patch.object(release.os, "sched_getaffinity", side_effect=AssertionError("not needed")):
+                    count, journal = self.reconcile_record("in_progress", binaryen_cores=9)
+                    self.assertEqual(count, 0)
+                    self.assertEqual(journal["allocations"][self.record["name"]], self.record)
+                    count, journal = self.reconcile_record("completed", binaryen_cores=9)
+                    self.assertEqual(count, 1)
+                    self.assertFalse(journal["allocations"])
+
     def test_should_enforce_lifetime_even_without_github(self):
         error = urllib.error.URLError("offline")
         self.assertEqual(self.reconcile_record(None, api_error=error)[0], 0)
@@ -213,10 +322,14 @@ class ReleaseRunnerTests(unittest.TestCase):
     def test_should_not_mutate_anything_in_dry_run(self):
         with patch.object(release, "queued_jobs", return_value=[(self.run, self.job)]), \
              patch.object(release, "launch") as launch, \
-             patch.object(release, "save") as save:
-            release.reconcile(Mock(), self.config)
+             patch.object(release, "save") as save, \
+             patch("builtins.print") as output:
+            release.reconcile(Mock(), dict(self.config, binaryen_cores=4))
         launch.assert_not_called()
         save.assert_not_called()
+        plan = json.loads(output.call_args.args[0])
+        self.assertEqual(plan["cpus"], 8)
+        self.assertEqual(plan["binaryen_cores"], 4)
 
     def test_should_bound_retries_across_controller_restarts(self):
         with tempfile.TemporaryDirectory() as directory:
