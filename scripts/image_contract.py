@@ -221,6 +221,9 @@ def render(lock, template, lock_file="image.lock.json"):
     }
     if full:
         android = lock["android"]
+        # Legacy full/AMD64 recipes predate ANDROID_ENV and ANDROID_PATH.
+        values["NDK_VERSION"] = android["ndk"]
+        values["CMDLINE_VERSION"] = android["cmdline_tools"]
         values["ANDROID_ENV"] = (
             "    ANDROID_HOME=/opt/android-sdk \\\n"
             "    ANDROID_SDK_ROOT=/opt/android-sdk \\\n"
