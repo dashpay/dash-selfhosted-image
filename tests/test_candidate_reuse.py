@@ -80,9 +80,24 @@ class ReuseTests(unittest.TestCase):
                 self.assertIsNone(self.find())
                 self.inspect.assert_not_called()
 
-    def test_other_pr_same_head_forks_and_unapproved_controllers_are_not_reused(self):
+    def test_other_pr_reuse_preserves_source_status_and_label_identity(self):
+        self.run["pull_requests"] = [{"number": 5000}]
+        self.status["context"] = "Runner image candidate / PR 5000"
+        source = self.find()
+        self.assertIsNotNone(source)
+        old = self.inspect.call_args.args[1]
+        self.assertEqual(old["pr"], 5000)
+        self.assertEqual(old["candidate_tag"], f"pr-5000-{self.old_head}-{self.record['manifest_sha256'][:12]}")
+        # A status for the destination PR must never stand in for source proof.
+        self.status["context"] = "Runner image candidate / PR 5151"
+        self.inspect.reset_mock()
+        self.assertIsNone(self.find())
+        self.inspect.assert_not_called()
+
+    def test_ambiguous_pr_same_head_forks_and_unapproved_controllers_are_not_reused(self):
         original = copy.deepcopy(self.run)
-        cases = [("pull_requests", [{"number": 5152}]), ("head_sha", "a" * 40),
+        cases = [("pull_requests", []), ("pull_requests", [{"number": 5151}, {"number": 5152}]),
+                 ("pull_requests", [{"number": "5151"}]), ("head_sha", "a" * 40),
                  ("event", "pull_request"), ("conclusion", "failure"), ("status", "in_progress"),
                  ("path", ".github/workflows/tests.yml"),
                  ("repository", {"full_name": "evil/platform"}),

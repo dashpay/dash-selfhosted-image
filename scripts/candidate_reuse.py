@@ -58,10 +58,12 @@ def find_source(api, record, manifest, control_revision):
         head = listed.get("head_sha")
         if not matches(r"[0-9a-f]{40}", head) or head == record["head_sha"]:
             continue
-        if not any(pr.get("number") == record["pr"] for pr in listed.get("pull_requests", [])):
+        linked = listed.get("pull_requests", [])
+        if len(linked) != 1 or type(linked[0].get("number")) is not int or linked[0]["number"] <= 0:
             continue
-        old = dict(record, head_sha=head,
-                   candidate_tag=f"pr-{record['pr']}-{head}-{record['manifest_sha256'][:12]}")
+        source_pr = linked[0]["number"]
+        old = dict(record, pr=source_pr, head_sha=head,
+                   candidate_tag=f"pr-{source_pr}-{head}-{record['manifest_sha256'][:12]}")
         try:
             run = api.call(f"repos/{PLATFORM}/actions/runs/{listed['id']}")
             validate_source_run(run, old, control_revision)
@@ -77,7 +79,7 @@ def find_source(api, record, manifest, control_revision):
         except ValueError as error:
             print(f"Not reusing run {listed['id']}: {error}", file=sys.stderr)
             continue
-        return {"reference": reference, "source_run": run["id"], "source_head": head,
+        return {"reference": reference, "source_run": run["id"], "source_pr": source_pr, "source_head": head,
                 "manifest_sha256": record["manifest_sha256"],
                 "recipe_revision": record["recipe_revision"], "platform": "linux/amd64"}
     return None

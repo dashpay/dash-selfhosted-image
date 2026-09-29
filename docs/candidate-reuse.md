@@ -6,16 +6,17 @@ This is **not** a general shared BuildKit cache or a relaxed image contract.
 
 ## Admission
 
-- Same-repository, same-PR publications only; forks and other architectures use
+- Same-repository publications only; forks and other architectures use
   the original cold-build path. Fork runner admission is unchanged.
 - Exact canonical requirements fingerprint, including the immutable recipe SHA
   and architecture. Similar-but-not-identical requirements are a cache miss.
 - A completed successful `pull_request_target` candidate publication whose
   referenced orchestration revision is the current trusted caller pin or the
   explicitly reviewed pre-reuse controller `7d901150` (full SHA in code).
-- The source head's **latest** full status must have the exact context, trusted
+- The source PR/head's **latest** full status must have the exact context, trusted
   GitHub Actions creator, immutable digest, and link to that exact source run.
-  Newer failures, case variants and spoofed statuses cannot fall back to older
+  Cross-PR reuse preserves the source PR identity rather than substituting the
+  destination PR context/labels. Newer failures, case variants and spoofed statuses cannot fall back to older
   successes. API errors fail closed; they do not enable unchecked reuse.
 - Inspect the immutable source config for Linux/AMD64, UID/GID 1001, exact original
   PR/head/requirements/recipe labels and absence of `ONBUILD` triggers.
