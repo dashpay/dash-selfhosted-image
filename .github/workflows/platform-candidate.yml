@@ -69,6 +69,7 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      statuses: read
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:

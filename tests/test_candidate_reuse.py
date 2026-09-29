@@ -155,6 +155,14 @@ class ReuseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "immutable image"):
                 reuse.prepare_context({"reference": ref}, "/unused")
 
+    def test_reuse_builder_can_read_provenance_but_cannot_publish_statuses(self):
+        workflow = (ROOT / ".github/workflows/platform-candidate.yml").read_text()
+        build = workflow.split("\n  build:", 1)[1].split("\n  publish:", 1)[0]
+        permissions = build.split("    permissions:\n", 1)[1].split("    outputs:", 1)[0]
+        self.assertEqual(set(line.strip() for line in permissions.splitlines() if line.strip()),
+                         {"contents: read", "pull-requests: read", "actions: read", "statuses: read"})
+        self.assertNotIn("write", permissions)
+
     def test_workflow_keeps_tests_and_export_after_reuse_and_separates_publisher(self):
         workflow = (ROOT / ".github/workflows/platform-candidate.yml").read_text()
         build = workflow.split("\n  build:", 1)[1].split("\n  publish:", 1)[0]
