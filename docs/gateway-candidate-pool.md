@@ -20,6 +20,32 @@ The Gateway config has `state_dir` and a `hosts` mapping for `runner1` and
 `server2`; each host entry contains `key` (SSH key path), `port` and `destination`.
 Keep it and its journal owner-only. Use strict SSH host verification.
 
+### Package the complete runtime
+
+Create an offline artifact from the reviewed source with
+`python3 scripts/package_candidate_pool.py --output /new/path/runtime.tar`.
+The command never installs files, invokes the allocator, registers a runner,
+or reads credentials/configuration. It packages only the six required Python
+modules, **`client-codegen/lock.json`**, and their SHA-256 inventory; it refuses
+to overwrite an existing artifact. Preserve this repository-relative layout
+when deploying. A scripts-only copy is incomplete: candidate manifest
+validation reads the reviewed codegen lock before any host preparation or JIT
+registration. The lock is a security check, not optional metadata, and must
+not be reconstructed from an untrusted PR manifest or replaced with a permissive
+fallback. Unit tests exercise an extracted bundle in an isolated interpreter
+and reproduce the old missing-lock failure.
+
+For an existing deployment, first inspect and stop future Gateway triggers,
+wait for the active process and controller lock to become idle, verify deployed
+script hashes against the selected source, and back up any file being changed.
+Restore missing support data only from that exact reviewed revision, validate
+the complete deployed layout, then restore the inspected schedule. Keep host
+cleanup guards enabled when no host script is changing. A maintenance job that
+cannot manage another automation must leave the live deployment untouched and
+report the need for an administrator-context maintenance turn; do not bypass
+scheduler restrictions or start a second allocator. A local package test is
+not proof of actual JIT execution or cleanup.
+
 The controller polls current attempts of the normal Rust, Kotlin and NPM
 validation workflows, across **all PR numbers and target branches**. It validates
 the current head, changed requirements, trusted publisher, full candidate image
