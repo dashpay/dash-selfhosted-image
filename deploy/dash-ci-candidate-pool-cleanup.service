@@ -1,0 +1,16 @@
+[Unit]
+Description=Offline cleanup for permanent Platform candidate workers
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/dash-ci-candidate-pool/scripts/candidate_pool_host.py --cleanup
+TimeoutStartSec=600
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dash-ci-candidate-pool
+NoNewPrivileges=true
