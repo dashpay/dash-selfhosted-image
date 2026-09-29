@@ -128,7 +128,7 @@ def inspect_published(reference, record):
     return config
 
 
-def candidate_digest(api, record):
+def candidate_digest(api, record, expected_run_id=None):
     validate_request(record)
     context = f"{CONTEXT} / PR {record['pr']}"
     page = 1
@@ -148,6 +148,8 @@ def candidate_digest(api, record):
     match = re.fullmatch(r"https://github[.]com/dashpay/platform/actions/runs/([0-9]+)",
                          candidate.get("target_url", ""))
     require(match is not None, "Candidate status must identify its trusted publishing run")
+    if expected_run_id is not None:
+        require(str(expected_run_id) == match.group(1), "Candidate status identifies a different source run")
     run = api.call(f"repos/{PLATFORM}/actions/runs/{match.group(1)}")
     require(run["path"] == ".github/workflows/runner-image-candidate.yml"
             and run["event"] == "pull_request_target" and run["conclusion"] == "success",

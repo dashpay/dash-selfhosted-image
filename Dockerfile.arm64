@@ -17,8 +17,8 @@ RUN test "${TARGETARCH:-arm64}" = arm64 \
  && rm -rf /tmp/bootstrap-ca /tmp/bootstrap-ca.deb \
  && rm -f /etc/apt/sources.list.d/ubuntu.sources \
  && printf 'deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble main universe\ndeb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble-updates main universe\ndeb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/%s noble-security main universe\n' "$APT_SNAPSHOT" "$APT_SNAPSHOT" "$APT_SNAPSHOT" > /etc/apt/sources.list \
- && apt-get update --error-on=any \
- && apt-get install -y --no-install-recommends ca-certificates curl git gh jq python3 unzip zip xz-utils bzip2 gnupg build-essential clang llvm libsnappy-dev cmake libgmp-dev libssl-dev pkg-config openjdk-17-jdk-headless libicu74 libkrb5-3 zlib1g libgcc-s1 libstdc++6 libcurl4t64 liblttng-ust1t64 libunwind8 libpulse0 libx11-xcb1 libnss3 libxcomposite1 libxcursor1 libxi6 libxrandr2 libxtst6 libasound2t64 libgl1 libegl1 libdbus-1-3 libxdamage1 libxfixes3 \
+ && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update --error-on=any \
+ && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ca-certificates curl git gh jq python3 unzip zip xz-utils bzip2 gnupg build-essential clang llvm libsnappy-dev cmake libgmp-dev libssl-dev pkg-config openjdk-17-jdk-headless libicu74 libkrb5-3 zlib1g libgcc-s1 libstdc++6 libcurl4t64 liblttng-ust1t64 libunwind8 libpulse0 libx11-xcb1 libnss3 libxcomposite1 libxcursor1 libxi6 libxrandr2 libxtst6 libasound2t64 libgl1 libegl1 libdbus-1-3 libxdamage1 libxfixes3 \
  && dpkg-query -W -f='${Package}\t${Version}\n' | sort > /usr/share/ci-apt-packages.tsv \
  && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/apt/archives/* \
  && groupadd --gid 1001 runner \

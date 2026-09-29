@@ -68,6 +68,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
+      statuses: read
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
@@ -88,15 +90,30 @@ jobs:
           artifact-ids: ${{ needs.request.outputs.artifact_id }}
           merge-multiple: true
           path: ${{ runner.temp }}/request
-      - name: Materialize locked build inputs
+      - name: Resolve only verified exact-contract image reuse
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTROL_REVISION: ${{ inputs.control_revision }}
         run: |
-          python3 control/scripts/image_contract.py materialize "$RUNNER_TEMP/request/manifest.json" recipe
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          python3 control/scripts/candidate_reuse.py \
+            --request "$RUNNER_TEMP/request/request.json" \
+            --manifest "$RUNNER_TEMP/request/manifest.json" \
+            --control-revision "$CONTROL_REVISION" --recipe recipe \
+            --reuse-context "$RUNNER_TEMP/reused-candidate" --github-output "$GITHUB_OUTPUT"
+      - name: Materialize locked build inputs on cache miss
+        if: steps.inputs.outputs.reused != 'true'
+        run: python3 control/scripts/image_contract.py materialize "$RUNNER_TEMP/request/manifest.json" recipe
+      - name: Make room on the disposable builder
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Build candidate without publishing credentials
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
-          context: recipe
+          context: ${{ steps.inputs.outputs.context }}
           platforms: linux/amd64
           load: true
           tags: dash-selfhosted-image:candidate
@@ -119,7 +136,7 @@ jobs:
       - name: Export the tested build with provenance and SBOM
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
-          context: recipe
+          context: ${{ steps.inputs.outputs.context }}
           platforms: linux/amd64
           outputs: type=oci,dest=${{ runner.temp }}/candidate.oci.tar
           provenance: mode=max
