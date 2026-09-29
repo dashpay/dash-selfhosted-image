@@ -53,6 +53,12 @@ class FakeAPI:
 
 
 class ReleaseGatewayTests(unittest.TestCase):
+    def test_overlapping_schedules_wait_for_candidate_then_remain_bounded(self):
+        with patch.object(gateway.fcntl, 'flock', side_effect=[BlockingIOError, None]), patch.object(gateway.time, 'sleep'):
+            self.assertTrue(gateway.admission_lock(object()))
+        with patch.object(gateway.fcntl, 'flock', side_effect=BlockingIOError), patch.object(gateway.time, 'sleep'):
+            self.assertFalse(gateway.admission_lock(object(), timeout=0))
+
     def test_future_runs_and_attempts_discovered_without_edits(self):
         for run_id, attempt, job_id in [(100, 1, 200), (100, 2, 201), (999, 7, 777)]:
             api = FakeAPI(*pair(run_id, attempt, job_id))

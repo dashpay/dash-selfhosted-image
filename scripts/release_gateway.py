@@ -283,6 +283,20 @@ def validate_config(config):
     return config
 
 
+def admission_lock(handle, timeout=40):
+    # Avoid phase-lock starvation when the one-minute candidate and two-minute
+    # release schedules consistently overlap. Never wait indefinitely.
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.25)
+
+
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--config', required=True); parser.add_argument('--plan', action='store_true')
     args = parser.parse_args(); os.umask(0o077)
@@ -300,10 +314,8 @@ def main():
             print(json.dumps({'locked': True})); return
         # Serializes admission with the already-deployed candidate Gateway allocator.
         with Path(config['candidate_lock']).open('a') as candidate_lock:
-            try:
-                fcntl.flock(candidate_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                print(json.dumps({'locked': True, 'reason': 'candidate admission active'})); return
+            if not admission_lock(candidate_lock):
+                print(json.dumps({'locked': True, 'reason': 'candidate admission active after bounded wait'})); return
             try:
                 api = GitHub(); verify_group(api)
                 records_path = state / 'registrations.json'
