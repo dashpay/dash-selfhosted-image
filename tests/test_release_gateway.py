@@ -130,4 +130,35 @@ class ReleaseGatewayTests(unittest.TestCase):
             self.assertTrue(host.candidate_active())
 
 
+
+class WatchdogTests(unittest.TestCase):
+    def test_independent_missing_disabled_stale_and_recovery(self):
+        from release_watchdog import diagnose, RELEASE_JOB, CANDIDATE_JOB
+        jobs=[{'id':i,'enabled':True,'state':{'consecutiveErrors':0}} for i in (RELEASE_JOB,CANDIDATE_JOB)]
+        self.assertFalse(diagnose(jobs, {'checked_at':1000}, 1001))
+        self.assertIn('10 minutes', diagnose(jobs, {'checked_at':1000}, 1601)[0]['reason'])
+        self.assertTrue(diagnose(jobs, {'checked_at':1000,'plan':True}, 1001))
+        jobs[0]['enabled']=False
+        self.assertIn('disabled', diagnose(jobs, {'checked_at':1000}, 1001)[0]['reason'])
+        jobs[0]['enabled']=True; jobs[1]['state']['consecutiveErrors']=2
+        self.assertIn('repeated', diagnose(jobs, {'checked_at':1000}, 1001)[0]['reason'])
+        jobs[1]['state']['consecutiveErrors']=0
+        self.assertFalse(diagnose(jobs, {'checked_at':1000}, 1001))
+
+class DeploymentBundleTests(unittest.TestCase):
+    def test_staged_bundle_validates_manifest_without_checkout_dependencies(self):
+        import shutil, subprocess
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as folder:
+            staged = Path(folder)
+            for relative in (root / 'deploy/release-gateway.files').read_text().splitlines():
+                destination = staged / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(root / relative, destination)
+            (staged / 'manifest.json').write_text(json.dumps(MANIFEST))
+            command = "import sys,json;sys.path.insert(0,'scripts');import release_gateway,release_gateway_host,release_watchdog;release_gateway.validate_manifest(json.load(open('manifest.json')))"
+            result = subprocess.run([sys.executable, '-I', '-c', command], cwd=staged, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+
 if __name__ == '__main__':unittest.main()

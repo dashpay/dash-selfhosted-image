@@ -29,7 +29,10 @@ reason to weaken validation or fall back to persistent PR workers.
 
 ## Deployment and shared capacity
 
-Stage source as a root-owned immutable versioned directory. Configure the fixed
+Stage every entry in `deploy/release-gateway.files` into an immutable versioned
+directory, preserving relative paths on both Gateway and root-owned host. The
+reviewed `client-codegen/lock.json` is a runtime validation dependency, not an
+optional fixture. Run the staged-bundle test, not just checkout-local imports. Configure the fixed
 host command in the private Gateway config. The host reads only
 `/etc/dash-ci-releases/gateway.json`, with the same production allocator resource
 keys except App IDs/private-key fields are absent. The Gateway config contains
@@ -63,7 +66,13 @@ Slack/email or PR comments. Confirm the event handoff and the owner conversation
 visible report in live acceptance; successful local notification calculation is
 not delivery proof.
 
-Keep an independent scheduled health check for stale allocator `checked_at`
+`release_watchdog.py --config <private-operator-file>` is a separate, headless
+health check (every two minutes). It needs no GitHub credential and cannot
+allocate workers. It checks schedule enablement/error streaks and requires a
+non-plan allocator receipt within ten minutes. Controlled stale/disabled fixtures
+exercise alert and recovery handoff without stopping real workers.
+
+Keep this independent scheduled health check for stale allocator `checked_at`
 receipts and disabled/backed-off scheduler state; the allocator cannot diagnose
 its own total absence. Its owner-session report must use current-session announce
 delivery so alerts persist in WebChat history. Host cleanup remains independent
