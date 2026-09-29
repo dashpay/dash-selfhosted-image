@@ -35,6 +35,19 @@ class ImageContractTests(unittest.TestCase):
         self.assertEqual({a['name'] for a in arm['artifacts']},
                          {'runner', 'cargo-nextest', 'cargo-llvm-cov', 'cargo-machete', 'protoc', 'rustup-init'})
 
+    def test_snapshot_retries_are_bounded_without_weakening_locked_sources(self):
+        for filename in ('Dockerfile', 'Dockerfile.arm64'):
+            source = (ROOT / filename).read_text()
+            self.assertEqual(source.count('Acquire::Retries=5'), 2)
+            self.assertEqual(source.count('Acquire::https::Timeout=30'), 2)
+            self.assertEqual(source.count('Acquire::http::Timeout=30'), 2)
+            self.assertIn('update --error-on=any', source)
+            self.assertIn('https://snapshot.ubuntu.com/ubuntu/%s', source)
+            self.assertIn('ADD --checksum=sha256:', source)
+            for forbidden in ('--allow-unauthenticated', 'trusted=yes', 'Verify-Peer=false',
+                              '--fix-missing', 'archive.ubuntu.com', '|| true'):
+                self.assertNotIn(forbidden, source)
+
     def test_android_profile_cannot_be_scheduled_as_arm64(self):
         self.manifest['requirements']['platform'] = 'linux/arm64'
         with self.assertRaisesRegex(ValueError, 'Android/KVM'):
