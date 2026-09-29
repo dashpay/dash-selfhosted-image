@@ -71,13 +71,14 @@ def capacity(config, journal):
     names = docker("ps", "-a", "--filter", "label=" + MANAGED + "=1", "--format", "{{.Names}}").split()
     require(set(names) <= set(journal), "Unjournaled pool worker; operator attention required")
     legacy = docker("ps", "-a", "--filter", "label=org.dash.ci.candidate=1", "--format", "{{.Names}}").split()
+    releases = docker("ps", "-a", "--filter", "label=org.dash.ci.release=1", "--format", "{{.Names}}").split()
     root = docker("info", "--format", "{{.DockerRootDir}}").strip()
     disk_gib = shutil.disk_usage(root).free // 1024**3
     memory_gib = next(int(line.split()[1]) // 1024**2 for line in Path("/proc/meminfo").read_text().splitlines()
                       if line.startswith("MemAvailable:"))
-    return {"available": not names and not legacy and disk_gib >= config["min_free_gib"]
+    return {"available": not names and not legacy and not releases and disk_gib >= config["min_free_gib"]
             and memory_gib >= config["memory_gib"] + 16,
-            "workers": len(names), "legacy_workers": len(legacy), "free_disk_gib": disk_gib,
+            "workers": len(names), "legacy_workers": len(legacy), "release_workers": len(releases), "free_disk_gib": disk_gib,
             "available_memory_gib": memory_gib}
 
 

@@ -40,6 +40,19 @@ def host_config():
 
 
 class PolicyTests(unittest.TestCase):
+    def test_release_worker_reserves_shared_candidate_capacity(self):
+        for occupied in (False, True):
+            def docker(*args):
+                if args[0] == "info":
+                    return "/docker"
+                return "platform-release-123-abcdefabcdef" if occupied and "label=org.dash.ci.release=1" in args else ""
+            with patch.object(host, "docker", side_effect=docker), \
+                 patch.object(host.shutil, "disk_usage", return_value=Mock(free=200 * 1024**3)), \
+                 patch.object(host.Path, "read_text", return_value="MemAvailable: 100663296 kB\n"):
+                result = host.capacity(host_config(), {})
+            self.assertEqual(result["available"], not occupied)
+            self.assertEqual(result["release_workers"], int(occupied))
+
     def test_all_kinds_and_arbitrary_prs(self):
         for pr in (5151, 5152, 6000):
             for kind in ("rust", "kotlin", "npm"):
