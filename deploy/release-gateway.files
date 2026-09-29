@@ -1,0 +1,8 @@
+scripts/release_gateway.py
+scripts/release_gateway_host.py
+scripts/release_watchdog.py
+scripts/release_runner.py
+scripts/candidate_runner.py
+scripts/platform_request.py
+scripts/image_contract.py
+client-codegen/lock.json
